@@ -1,0 +1,14 @@
+# ---- R ----
+.Rhistory
+.RData
+.Rproj.user/
+
+# ---- OS ----
+.DS_Store
+
+# ---- Raw data ----
+data/
+
+# ---- Temporary / cache ----
+*_tmp/
+cache/
