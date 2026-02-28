@@ -91,30 +91,111 @@ margin_errors <- function(p, w, margins) {
 }
 
 
+# Empirical Bayes smoothing with age-local priors
+# User can control the size of neighborhood
+fit_dirichlet_mom <- function(P, w = NULL, eps = 1e-8) {
+  
+  P <- pmax(P, eps)
+  P <- P / rowSums(P)
+  
+  if (is.null(w)) w <- rep(1, nrow(P))
+  w_norm <- w / sum(w)
+  
+  m <- colSums(w_norm * P)
+  
+  v <- colSums(w_norm * (P - matrix(m, nrow(P), length(m), byrow = TRUE))^2)
+  
+  alpha0 <- mean(m * (1 - m) / pmax(v, eps) - 1)
+  alpha0 <- max(alpha0, 1e-3)
+  
+  alpha <- m * alpha0
+  
+  list(alpha = alpha, alpha0 = alpha0)
+}
+
+
+smooth_age_dirichlet_decay <- function(df, tau = 3) {
+  
+  df %>%
+    group_by(lgbt_cat, sex) %>%
+    group_modify(function(d_group, keys) {
+      
+      ages <- sort(unique(d_group$age))
+      
+      purrr::map_dfr(ages, function(a) {
+        
+        d_focal <- d_group %>% filter(age == a)
+        
+        d_neighbors <- d_group %>%
+          filter(age != a, n_eff > 0)
+        
+        if (nrow(d_neighbors) == 0) {
+          return(d_focal %>% mutate(p_cat_eb = p_cat))
+        }
+        
+        # apply smooth decay weights
+        d_neighbors <- d_neighbors %>%
+          mutate(
+            w_adj = n_eff * exp(-abs(age - a) / tau)
+          )
+        
+        # reshape to wide for Dirichlet estimation
+        P_neighbors <- d_neighbors %>%
+          select(age, gen_cat, p_cat, w_adj) %>%
+          tidyr::pivot_wider(
+            names_from  = gen_cat,
+            values_from = p_cat
+          )
+        
+        w <- P_neighbors$w_adj
+        P_mat <- as.matrix(P_neighbors %>% select(-age, -w_adj))
+        
+        # estimate Dirichlet prior
+        dir_fit <- fit_dirichlet_mom(P_mat, w)
+        
+        alpha <- dir_fit$alpha
+        alpha0 <- sum(alpha)
+        
+        # shrink focal
+        d_focal %>%
+          arrange(gen_cat) %>%
+          mutate(
+            p_cat_eb =
+              (n_eff * p_cat + alpha[match(gen_cat, names(alpha))]) /
+              (n_eff + alpha0)
+          )
+      })
+    }) %>%
+    ungroup() %>%
+    select(lgbt_cat,sex,age,gen_cat,p_cat_eb,n_eff,w_sum,w2_sum) %>%
+    pivot_wider(names_from = "gen_cat", values_from = "p_cat_eb")
+}
+
+
 file_list <- list.files(file.path(root_dir,"data/hps"))
 file_list <- file_list[str_detect(file_list, ".csv") & !str_detect(file_list, "repwgt")]
 
 acs_age_bins <- tibble::tribble(
-  ~age_lo, ~age_hi, ~acs_bin,
-  18,  19, "18_19",
-  20,  20, "20",
-  21,  21, "21",
-  22,  24, "22_24",
-  25,  29, "25_29",
-  30,  34, "30_34",
-  35,  39, "35_39",
-  40,  44, "40_44",
-  45,  49, "45_49",
-  50,  54, "50_54",
-  55,  59, "55_59",
-  60,  61, "60_61",
-  62,  64, "62_64",
-  65,  66, "65_66",
-  67,  69, "67_69",
-  70,  74, "70_74",
-  75,  79, "75_79",
-  80,  84, "80_84",
-  85, 120, "85+"
+  ~age_lo, ~age_hi, ~acs_bin, ~acs_bin_col,
+  18,  19, "18_19", "18_19",
+  20,  20, "20", "20",
+  21,  21, "21", "21",
+  22,  24, "22_24", "22_24",
+  25,  29, "25_29", "25_29",
+  30,  34, "30_34", "30_34",
+  35,  39, "35_39", "35_39",
+  40,  44, "40_44", "40_44",
+  45,  49, "45_49", "45_49",
+  50,  54, "50_54", "50_54",
+  55,  59, "55_59", "55_59",
+  60,  61, "60_61", "60_61",
+  62,  64, "62_64", "62+",
+  65,  66, "65_66", "62+",
+  67,  69, "67_69", "62+",
+  70,  74, "70_74", "62+",
+  75,  79, "75_79", "62+",
+  80,  84, "80_84", "62+",
+  85, 120, "85+", "62+"
 )
 
 # Import state crosswalk from tigris
@@ -151,15 +232,23 @@ hps_micro <- hps %>%
     ),
     age = ref_year - TBIRTH_YEAR,
     gen = gen_from_age_2023(age),
-    
+    gender_cat = case_when(
+      GENID_DESCRIBE == 3 & EGENID_BIRTH == 1 ~ "Trans woman",
+      GENID_DESCRIBE == 3 & EGENID_BIRTH == 2 ~ "Trans man",
+      GENID_DESCRIBE == 2 & EGENID_BIRTH == 1 ~ "Trans woman",
+      GENID_DESCRIBE == 1 & EGENID_BIRTH == 2 ~ "Trans man",
+      GENID_DESCRIBE == 1 & EGENID_BIRTH == 1 ~ "Cis man",
+      GENID_DESCRIBE == 2 & EGENID_BIRTH == 2 ~ "Cis woman",
+      GENID_DESCRIBE == 4 & EGENID_BIRTH == 1 ~ "NB AMAB",
+      GENID_DESCRIBE == 4 & EGENID_BIRTH == 2 ~ "NB AFAB"
+    ),
     lgbt_cat = case_when(
-      GENID_DESCRIBE == 3 ~ "Trans",
+      #gender_cat %in% c("Trans man", "Trans woman") ~ "Trans",
       SEXUAL_ORIENTATION == 3     ~ "Bisexual",
       SEXUAL_ORIENTATION == 1     ~ "LG",
       SEXUAL_ORIENTATION %in% c(4,5) ~ "Queer",
       TRUE ~ "Straight"
     ),
-    
     y_lgbt = as.integer(lgbt_cat != "Straight")
   ) %>%
   filter(!is.na(sex), !is.na(gen), !is.na(PWEIGHT), PWEIGHT > 0) %>%
@@ -218,6 +307,41 @@ for (lam in c(1e5)) {
 
 best <- soft_calibrate_probs(hps_micro, p0, w, X, margins, lambda = 3e4)  # example
 hps_micro$p_lgbt_adj <- best$p_adj
+
+gen_sex_flow = hps_micro %>% 
+  # Top code age at 62
+  # I'd like to top code at a higher age, but the Dirichlet smoothing won't behave
+  # because we start encountering missing data for the 62 year old cohort
+  mutate(age = if_else(age > 62,62,age)) %>%
+  #left_join(collapsed_age_bins, by = join_by(age >= age_lo, age <= age_hi)) %>%
+  group_by(lgbt_cat,gender_cat,sex,age) %>% 
+  summarize(n = sum(PWEIGHT)) %>%  
+  filter(!is.na(gender_cat)) %>% 
+  group_by(lgbt_cat,sex,age) %>% 
+  mutate(p_cat = n/sum(n),
+         gen_cat = case_when(gender_cat %in% c("Cis man","Cis woman") ~ "cis",
+                             gender_cat %in% c("NB AFAB", "NB AMAB") ~ "non_binary",
+                             gender_cat %in% c("Trans man", "Trans woman") ~ "trans"),
+         w_sum  = sum(n, na.rm = TRUE),
+         w2_sum = sum(n^2, na.rm = TRUE),
+         n_eff  = ifelse(w2_sum > 0, (w_sum^2) / w2_sum, NA_real_))
+         
+
+# Tau is increasing in smoothness
+gsf_eb <- smooth_age_dirichlet_decay(gen_sex_flow, tau = 3)
+saveRDS(gsf_eb,file.path(root_dir,"data/hps","age_gender_sexuality.rds"))
+
+# Merge on ACS age bins and take weighte averages to compute binned shares
+gsf_eb_bin = gsf_eb %>%
+  left_join(acs_age_bins, by = join_by(age >= age_lo, age <= age_hi)) %>%
+  group_by(lgbt_cat,sex,acs_bin_col) %>%
+  summarize(cis = weighted.mean(cis, w=w_sum),
+            non_binary = weighted.mean(non_binary, w=w_sum),
+            trans = weighted.mean(trans, w=w_sum)) %>%
+  select(lgbt_cat,sex,acs_bin_col,cis,non_binary,trans)
+
+saveRDS(gsf_eb_bin,file.path(root_dir,"data/hps","age_bin_gender_sexuality.rds"))
+
 
 # Compute relative shares of LGBT sub-populations by age-sex-state
 hps_micro_comp <- hps_micro %>%
@@ -316,3 +440,13 @@ rates_final <- hps_gallup_rates %>%
               values_fill = 0)
 
 saveRDS(rates_final,file.path(root_dir,"data/hps","hps_acs_rates.rds"))
+
+
+
+
+
+
+
+
+
+

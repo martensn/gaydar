@@ -35,23 +35,30 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       selectInput("state_abbr", "State", choices = get_state_choices(), selected = "IL"),
-      numericInput("year", "ACS year (5-year)", value = 2023, min = 2010, max = 2024, step = 1),
-      checkboxInput("use_calibration", "Calibrate based on geography of same-sex couples?", value = TRUE),
-      sliderInput("gamma", "Calibration strength (gamma)", min = 0, max = 2, value = 0.5, step = 0.1),
+      numericInput("year", "ACS Vintage", value = 2023, min = 2010, max = 2024, step = 1),
+      #checkboxInput("use_calibration", "Calibrate based on geography of same-sex couples?", value = TRUE),
+      #sliderInput("gamma", "Calibration strength (gamma)", min = 0, max = 2, value = 0.5, step = 0.1),
       selectInput(
         "metric",
-        "Map metric",
+        "Population:",
         choices = c(
-          "LGBT Share" = "shr_lgbt_map",
-          "Lesbian and Gay Share" = "shr_lg_map",
-          "Bisexual Share" = "shr_bi_map",
-          "Queer Share" = "shr_queer_map",
-          "Trans Share" = "shr_trans_map"
+          "LGBT"            = "lgbt",
+          "Lesbian and Gay" = "lg",
+          "Bisexual"        = "bi",
+          "Queer"           = "queer",
+          "Transgender"     = "trans"
         ),
-        selected = "shr_lgbt_map"
+        selected = "lgbt"
       ),
-      checkboxInput("simplify", "Simplify geometry (faster)", value = TRUE),
-      sliderInput("simplify_tol", "Simplify tolerance (degrees)", min = 0.0001, max = 0.01, value = 0.002, step = 0.0001)
+      checkboxGroupInput(
+        "gender",
+        "Gender",
+        choices = c("Man"="m","Woman"="w","Non-binary"="nb"),
+        selected = c("m","w","nb"),
+        inline = FALSE
+      )
+      #checkboxInput("simplify", "Simplify geometry (faster)", value = TRUE),
+      #sliderInput("simplify_tol", "Simplify tolerance (degrees)", min = 0.0001, max = 0.01, value = 0.002, step = 0.0001)
     ),
     mainPanel(
       leafletOutput("map", height = 700),
@@ -62,7 +69,34 @@ ui <- fluidPage(
 )
 
 server <- function(input, output, session) {
-
+  metric_gender_cols <- list(
+    lgbt = list(
+      m  = "lgbt_m_map",
+      w  = "lgbt_w_map",
+      nb = "lgbt_nb_map"
+    ),
+    lg = list(
+      m  = "lg_m_map",
+      w  = "lg_w_map",
+      nb = "nb_nt_lg"
+    ),
+    bi = list(
+      m  = "bi_m_map",
+      w  = "bi_w_map",
+      nb = "bi_nb_map"
+    ),
+    queer = list(
+      m  = "queer_m_map",
+      w  = "queer_w_map",
+      nb = "queer_nb_map"
+    ),
+    trans = list(
+      m  = "trans_m_map",
+      w  = "trans_w_map",
+      nb = character(0)
+    )
+  )
+  
   # base leaflet
   output$map <- renderLeaflet({
     leaflet() |>
@@ -84,7 +118,7 @@ server <- function(input, output, session) {
     cache_dir <- file.path("data/cache", "bg_state")
     dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
 
-    cache_key <- paste0("bg_", state, "_", year, "_cal", input$use_calibration, "_g", input$gamma, ".rds")
+    cache_key <- paste0("bg_", state, "_", year, "_calTRUE_g0.5.rds")
     cache_path <- file.path(cache_dir, cache_key)
 
     if (file.exists(cache_path)) {
@@ -100,62 +134,80 @@ server <- function(input, output, session) {
       year = year,
       rates = rates,
       use_calibration = input$use_calibration,
-      gamma = input$gamma
+      gamma = 0.5
     )
     
     saveRDS(out, cache_path)
     out
   })
-
-  observeEvent(bg_sf(), {
+  sf_view <- reactive({
+    
     sf_obj <- bg_sf()
-
-    # ---- ALWAYS normalize geometry for leaflet ----
-    sf_obj <- sf_obj |>
-      sf::st_make_valid()
+    req(sf_obj, input$metric, input$gender)
     
-    # Drop geometry collections safely (keep polygons + multipolygons)
+    validate(
+      need(length(input$gender) > 0, "Select at least one gender.")
+    )
+    
+    # ---- map (metric × gender) → columns ----
+    cols <- unlist(metric_gender_cols[[input$metric]][input$gender])
+    
+    validate(
+      need(length(cols) > 0, "No columns for this selection.")
+    )
+    
+    sf_obj %>%
+      mutate(
+        est_selected = rowSums(across(all_of(cols)), na.rm = TRUE),
+        denom_selected = rowSums(across(all_of(paste0("total_", input$gender))), na.rm = TRUE),
+        shr_selected = est_selected / pmax(denom_selected, 1)
+      )
+  })
+    
+  observe({
+    
+    sf_obj <- sf_view()
+    cat("metric:", input$metric,
+        "gender:", paste(input$gender, collapse=","),
+        "range:", paste(range(sf_obj$shr_selected, na.rm=TRUE), collapse=" to "),
+        "\n")
+    req(sf_obj)
+    
+    # ---- geometry prep (unchanged) ----
+    sf_obj <- sf_obj |> sf::st_make_valid()
+    
     geom_type <- sf::st_geometry_type(sf_obj, by_geometry = TRUE)
-    
     sf_obj <- sf_obj[geom_type %in% c("POLYGON", "MULTIPOLYGON"), ]
     
-    # optional simplification for browser speed
-    if (isTRUE(input$simplify)) {
-      sf_obj <- suppressWarnings(
-        sf::st_simplify(
-          sf_obj,
-          dTolerance = input$simplify_tol,
-          preserveTopology = TRUE
-        )
+    sf_obj <- suppressWarnings(
+      sf::st_simplify(
+        sf_obj,
+        dTolerance = 0.002,
+        preserveTopology = TRUE
       )
-    }
+    )
+    
     
     # Ensure leaflet-safe geometry
     sf_obj <- sf_obj |>
       sf::st_cast("MULTIPOLYGON", warn = FALSE)
     
-    # Final safety check
-    if (nrow(sf_obj) == 0) {
-      stop("All geometries dropped after normalization — unexpected geometry types.")
-    }
-
-    metric <- input$metric
-    vals <- sf_obj[[metric]]
-    dom <- vals[is.finite(vals)]
+    # Stable domain based on ALL genders for the current metric
+    vals <- sf_obj$shr_selected
+    qs <- quantile(vals, probs = c(0.005, 0.995), na.rm = TRUE)
+    vals_clamped <- pmin(pmax(vals, qs[1]), qs[2])
     
-    validate(
-      need(length(dom) > 0, paste0("Metric '", metric, "' has no finite values to plot."))
-    )
-    
-    pal <- colorNumeric("viridis", domain = dom, na.color = "#00000000")
+    pal <- colorNumeric("viridis", domain = qs, na.color = "#00000000")
 
     lbl <- sprintf(
-      "<strong>GEOID:</strong> %s<br/>Pop (18+): %s<br/>E[LGBT] (uncal): %s<br/>E[LGBT] (calib): %s<br/>Share: %s",
+      "<strong>GEOID:</strong> %s<br/>
+   Pop (18+): %s<br/>
+   E[selected]: %s<br/>
+   Share: %s",
       sf_obj$GEOID,
-      format(round(sf_obj$pop18), big.mark = ",", scientific=FALSE),
-      format(round(sf_obj$est_lgbt_uncal), big.mark = ",", scientific=FALSE),
-      format(round(sf_obj$est_lgbt_map), big.mark = ",", scientific=FALSE),
-      paste0(formatC(100 * sf_obj$shr_lgbt_map, format = "f", digits = 1), "%")
+      format(round(sf_obj$total_pop), big.mark = ","),
+      format(round(sf_obj$est_selected), big.mark = ","),
+      paste0(formatC(100 * sf_obj$shr_selected, digits = 0, format = "f"), "%")
     ) |> lapply(htmltools::HTML)
 
     leafletProxy("map", data = sf_obj) |>
@@ -166,15 +218,15 @@ server <- function(input, output, session) {
         opacity = 1,
         color = "#666666",
         fillOpacity = 0.7,
-        fillColor = ~pal(vals),
+        fillColor = ~pal(vals_clamped),
         label = lbl,
         highlightOptions = highlightOptions(weight = 1.2, color = "#444444", bringToFront = TRUE)
       ) |>
       addLegend(
         position = "bottomright",
         pal = pal,
-        values = vals,
-        title = metric,
+        values = vals_clamped,
+        title = paste0(input$metric," share among ",paste(input$gender, collapse = ", ")),
         opacity = 0.7
       )
 
@@ -185,49 +237,18 @@ server <- function(input, output, session) {
   })
 
   output$status <- renderPrint({
-    req(bg_sf())
-    sf_obj <- bg_sf()
+    sf_obj <- sf_view()
+    req(sf_obj)
     
-    # ---- state-level status ----
-    state_status <- tibble::tibble(
+    tibble::tibble(
       state = input$state_abbr,
       year = input$year,
+      metric = input$metric,
+      genders = paste(input$gender, collapse = ","),
       n_bg = nrow(sf_obj),
-      pop18_total = sum(sf_obj$pop18, na.rm = TRUE),
-      est_lgbt_uncal = sum(sf_obj$est_lgbt_uncal, na.rm = TRUE),
-      est_lgbt_map   = sum(sf_obj$est_lgbt_map, na.rm = TRUE),
-      share_lgbt_map =
-        sum(sf_obj$est_lgbt_map, na.rm = TRUE) /
-        sum(sf_obj$pop18, na.rm = TRUE)
-    )
-    
-    # ---- metro-level summary ----
-    metro_status <- sf_obj %>%
-      mutate(
-        cbsa_name = if_else(
-          is.na(cbsa_name),
-          paste(input$state_abbr, "non-CBSA"),
-          cbsa_name
-        )
-      ) %>%
-      st_drop_geometry() %>%
-      group_by(cbsa_name) %>%
-      summarise(
-        pop18 = sum(pop18, na.rm = TRUE),
-        est_lgbt_uncal = sum(est_lgbt_uncal, na.rm = TRUE),
-        est_lgbt_map   = sum(est_lgbt_map, na.rm = TRUE),
-        .groups = "drop"
-      ) %>%
-      mutate(
-        shr_lgbt_uncal = est_lgbt_uncal / pop18,
-        shr_lgbt_map   = est_lgbt_map   / pop18
-      ) %>%
-      arrange(desc(pop18))
-    
-    # ---- printed output ----
-    list(
-      state_summary = state_status,
-      metro_summary = metro_status
+      total_pop = sum(sf_obj$total_pop, na.rm = TRUE),
+      est_selected = sum(sf_obj$est_selected, na.rm = TRUE),
+      shr_selected = sum(sf_obj$est_selected, na.rm = TRUE) / sum(sf_obj$total_pop, na.rm = TRUE)
     )
   })
 }
