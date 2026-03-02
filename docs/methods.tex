@@ -1,0 +1,152 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb, amsfonts}
+\usepackage{setspace}
+\usepackage{hyperref}
+
+\setstretch{1.15}
+
+\title{Methods Appendix:\\Estimating Local LGBTQ Populations}
+\author{ }
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section{Measurement in HPS Microdata}
+
+Let $Y_i \in \{0,1\}$ indicate whether individual $i$ identifies as LGBTQ.
+Sex is defined using sex assigned at birth, and age is inferred from year of
+birth and top-coded at 62.
+
+An individual is classified as LGBTQ if sexual orientation is not straight
+or if gender identity is transgender. Subcategories include lesbian or gay,
+bisexual, queer, and transgender.
+
+Survey weights ($w_i$) are retained throughout. At this stage, estimates are
+purely survey-based and reflect sampling variability.
+
+\section{Soft Calibration to Gallup Marginals}
+
+Household Pulse Survey (HPS) and Gallup estimates differ in survey mode,
+sampling variation, and field timing. Rather than imposing exact agreement,
+HPS-based probabilities are softly calibrated toward Gallup benchmarks.
+
+Each individual begins with a baseline probability:
+\[
+p_{0i} = \text{clipped}(Y_i).
+\]
+
+A logit adjustment model is estimated:
+\[
+\text{logit}(p_i) = \text{logit}(p_{0i}) + X_i \theta,
+\]
+where $X_i$ includes generation effects and generation-by-sex interactions.
+
+The parameter vector $\theta$ minimizes a weighted objective combining:
+(i) a deviation penalty that keeps estimates close to HPS baselines, and
+(ii) a margin penalty that discourages deviation from Gallup targets.
+Optimization is performed using BFGS.
+
+\section{State--Cohort LGBT Rate Estimation}
+
+Using calibrated probabilities, state--sex--age LGBT identification rates are
+computed as:
+\[
+\widehat{P}(Y=1 \mid S, \text{State}, A)
+=
+\frac{\sum_i w_i p_i^{\text{adj}}}{\sum_i w_i}.
+\]
+
+Effective sample size is defined as:
+\[
+n_{\text{eff}} = \frac{(\sum_i w_i)^2}{\sum_i w_i^2}.
+\]
+
+Weekly survey waves are averaged to reduce short-term noise.
+
+\section{Age-Local Dirichlet Smoothing of Gender Composition}
+
+This step estimates the distribution of gender identity
+(cisgender, non-binary, transgender) within each sexual orientation category,
+sex assigned at birth, and exact age.
+
+Let $g \in \{\text{cis}, \text{non-binary}, \text{trans}\}$ index gender categories.
+Define:
+\[
+\hat{p}_{g,\ell,s,a} = \frac{n_{g,\ell,s,a}}{\sum_g n_{g,\ell,s,a}},
+\]
+where $n_{g,\ell,s,a}$ denotes survey-weighted counts.
+
+Effective sample size is:
+\[
+n_{\text{eff},\ell,s,a}
+=
+\frac{(\sum w_i)^2}{\sum w_i^2}.
+\]
+
+\subsection{Age-Local Prior Construction}
+
+For a focal age $a$, neighboring ages $a' \neq a$ receive weights:
+\[
+w_{a'}^{(a)} =
+n_{\text{eff},\ell,s,a'}
+\exp\!\left(-\frac{|a-a'|}{\tau}\right),
+\]
+where $\tau > 0$ controls smoothness.
+
+The age-local prior mean is:
+\[
+m_g^{(a)} =
+\frac{\sum_{a' \neq a} w_{a'}^{(a)} \hat{p}_{g,\ell,s,a'}}
+{\sum_{a' \neq a} w_{a'}^{(a)}}.
+\]
+
+\subsection{Dirichlet Moment Matching}
+
+A Dirichlet prior is centered at $\mathbf{m}^{(a)}$.
+The concentration parameter is estimated via method of moments:
+\[
+\alpha_0 =
+\text{mean}_g\!\left(\frac{m_g(1-m_g)}{v_g} - 1\right),
+\]
+where $v_g$ denotes weighted variance across neighboring ages.
+The prior vector is $\alpha_g = \alpha_0 m_g$.
+
+\subsection{Posterior Shrinkage}
+
+The smoothed estimate for focal age $a$ is:
+\[
+\tilde{p}_{g,\ell,s,a}
+=
+\frac{n_{\text{eff},\ell,s,a}\hat{p}_{g,\ell,s,a} + \alpha_g}
+{n_{\text{eff},\ell,s,a} + \alpha_0}.
+\]
+
+\section{Cross-State Shrinkage of LGBT Subcategory Shares}
+
+For each sex $s$, age bin $a$, and LGBT category $\ell$, define:
+\[
+\hat{\pi}_{\ell,s,a,j}
+=
+P(\ell \mid Y=1, s, a, \text{state } j),
+\]
+with effective sample size $n_{\text{eff},j}$.
+
+A beta prior is estimated across states using method of moments:
+\[
+\pi_{\ell,s,a,j} \sim \text{Beta}(\alpha, \beta).
+\]
+
+Posterior shrinkage yields:
+\[
+\tilde{\pi}_{\ell,s,a,j}
+=
+\frac{n_{\text{eff},j}\hat{\pi}_{\ell,s,a,j} + \alpha}
+{n_{\text{eff},j} + \alpha + \beta}.
+\]
+
+Final shares are renormalized within each state--sex--age bin.
+
+\end{document}
