@@ -11,7 +11,7 @@ Additionally, limitations within Household Pulse Survey microdata mean that I ca
 
 ## Summary
 
-The [Methods Appendix][https://github.com/martensn/gaydar/blob/main/docs/methods.pdf] offers a precise explanation of the process through which I derived the estimates, though I summarize the steps below:
+The [Methods Appendix](https://github.com/martensn/gaydar/blob/main/docs/methods.pdf) offers a precise explanation of the process through which I derived the estimates, though I summarize the steps below:
 
 1. Estimates LGBTQ identification rates by state × sex assigned at birth × age bin using pooled Household Pulse Survey (HPS) microdata, with survey-weighted estimation and soft calibration to recent Gallup national benchmarks.
 
@@ -36,7 +36,7 @@ Nonetheless, the reweighting ensures the estimates reflect more than the age and
 ### Household Pulse Survey (HPS)
 
 HPS was the first the Census data product to ask respondents about sexual orientation and gender identity, 
-basing the design of questions on the results of a [2022 NASEM report][https://www.nationalacademies.org/publications/26424].
+basing the design of questions on the results of a [2022 NASEM report](https://www.nationalacademies.org/publications/26424).
 Designed to elicit responses to rapidly changing situations (i.e. food security early in the coronavirus pandemic),
 the HPS surveyed different households each week. 
 While topics varied between weeks, HPS consistently collected the following demograhic data:
@@ -73,8 +73,8 @@ Population projections are anchored to **ACS 5-year estimates**, which provide s
 
 Specifically, the pipeline uses:
 
-* [Table B01001 (Sex by Age)][https://censusreporter.org/tables/B01001/] to obtain population counts by **sex assigned at birth** and granular age bins, measured at the **block-group** level.
-* [Table B09019 (Household Type by Relationship)][https://censusreporter.org/tables/B09019/] informs later spatial reweighting within states, measured at the **PUMA** level
+* [Table B01001 (Sex by Age)](https://censusreporter.org/tables/B01001/) to obtain population counts by **sex assigned at birth** and granular age bins, measured at the **block-group** level.
+* [Table B09019 (Household Type by Relationship)](https://censusreporter.org/tables/B09019/) informs later spatial reweighting within states, measured at the **PUMA** level
 
 Because the Household Pulse Survey (HPS) and ACS use different age groupings, HPS respondents are mapped into **ACS-compatible age bins** prior to estimation. This ensures that estimated LGBTQ identification rates and gender-composition shares can be directly applied to ACS population counts without interpolation or extrapolation.
 
