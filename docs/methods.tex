@@ -149,4 +149,127 @@ Posterior shrinkage yields:
 
 Final shares are renormalized within each state--sex--age bin.
 
+\section{ACS Projection to Census Tracts}
+
+Let $N^{(s,a)}_b$ denote the ACS 5-year population count for sex $s \in \{M, F\}$
+and age bin $a$ in Census tract $b$.
+Expected LGBTQ population counts are projected to the tract level by applying
+state--sex--age identification rates and gender composition shares to local
+demographic counts.
+
+For each combination of sex, age bin, LGBTQ subcategory $\ell$, and gender
+identity $g \in \{m, w, \text{nb}\}$, the expected count in tract $b$ is:
+\[
+\hat{E}[\text{count}_{g,\ell,b}]
+=
+\sum_{s,a}
+N^{(s,a)}_b
+\cdot \widehat{P}(Y=1 \mid s, a, \text{state})
+\cdot \tilde{\pi}_{\ell,s,a}
+\cdot \tilde{p}_{g,\ell,s,a}
+\]
+
+where $\tilde{\pi}_{\ell,s,a}$ is the shrunken subcategory share from
+Section~5 and $\tilde{p}_{g,\ell,s,a}$ is the smoothed gender composition
+share from Section~4. Since sexuality and gender identity co-vary with age and
+sex, and these vary locally, expected LGBTQ counts vary across tracts even
+within a state.
+
+Tracts that span PUMA boundaries receive population-weighted contributions
+from each PUMA proportional to the area of intersection.
+
+\section{PUMA Reweighting with Inverse-Distance-Weighted Smoothing}
+
+The projection in Section~6 allocates LGBTQ population based only on local
+age and sex composition. A second stage reweights within-state distribution
+using the observed geographic concentration of same-sex couples as a proxy
+for the broader LGBTQ population.
+
+\subsection{PUMA-Level Calibration Factors}
+
+For each PUMA $p$, define the uncalibrated LGBTQ share:
+\[
+S_p
+=
+\frac{\sum_{b \in p} \hat{E}[\text{LGBTQ}_b]}{\sum_{p'}\sum_{b \in p'} \hat{E}[\text{LGBTQ}_b]}.
+\]
+
+A PUMA-level signal $\sigma_p$ is constructed from the observed concentration
+of same-sex couples among all couples, logit-transformed and mean-centered with
+respect to the uncalibrated LGBTQ distribution:
+\[
+\tilde{\sigma}_p
+=
+\text{logit}\!\left(
+  \frac{\text{SS couples}_p}{\text{SS couples}_p + \text{OS couples}_p}
+\right)
+-
+\sum_{p'} S_{p'}\,\text{logit}\!\left(\cdots\right).
+\]
+
+The tilt factor for PUMA $p$ is $T_p = \exp(\gamma \tilde{\sigma}_p)$, where
+$\gamma > 0$ governs the strength of the reweighting. The calibrated target
+share is:
+\[
+S_p^*
+=
+\frac{S_p T_p}{\sum_{p'} S_{p'} T_{p'}}.
+\]
+
+The calibration factor is $\hat{c}_p = S_p^* / S_p$.
+
+\subsection{Inverse-Distance-Weighted Smoothing to Tract Level}
+
+Applying $\hat{c}_p$ uniformly to all tracts within PUMA $p$ produces a
+step-function surface with hard discontinuities at PUMA boundaries. These
+jumps are artifacts of the PUMA delineation rather than genuine demographic
+transitions. To address this, calibration factors are smoothed to the tract
+level using inverse-distance weighting.
+
+Let $\mathbf{x}_b$ and $\mathbf{x}_p$ denote the centroids of tract $b$ and
+PUMA $p$, respectively. The IDW-smoothed calibration factor for tract $b$ is:
+\[
+\tilde{c}_b
+=
+\frac{\displaystyle\sum_p \|\mathbf{x}_b - \mathbf{x}_p\|^{-2}\,\hat{c}_p}
+     {\displaystyle\sum_p \|\mathbf{x}_b - \mathbf{x}_p\|^{-2}},
+\]
+
+where distances are computed in projected coordinates (EPSG:3857).
+Tracts within a single PUMA receive a factor close to $\hat{c}_p$; tracts
+near PUMA boundaries receive a blend of the neighboring factors,
+producing a spatially continuous surface.
+
+All subcategory estimates in tract $b$ are multiplied by $\tilde{c}_b$.
+Final estimates are rescaled so state-level totals equal the uncalibrated
+totals:
+\[
+\text{scale}
+=
+\frac{\sum_b \hat{E}[\text{LGBTQ}_b]}{\sum_b \tilde{c}_b\,\hat{E}[\text{LGBTQ}_b]}.
+\]
+
+\section{Capacity Constraint}
+
+In high-concentration areas, PUMA reweighting and state-level rescaling can
+push the estimated LGBTQ count for a gender group above that group's total
+population. A capacity constraint ensures no tract's estimates violate this
+bound.
+
+For gender group $g \in \{m, w, \text{nb}\}$ and tract $b$, let
+$\hat{N}^{\text{LGBTQ}}_{g,b}$ denote the post-calibration LGBTQ count and
+$N_{g,b}$ the gender-group population. Define:
+\[
+\kappa_{g,b}
+=
+\min\!\left(1,\;
+  \frac{N_{g,b}}{\hat{N}^{\text{LGBTQ}}_{g,b}}
+\right).
+\]
+
+All subcategory counts for gender group $g$ in tract $b$ are multiplied by
+$\kappa_{g,b}$. This preserves the relative composition of subcategories
+(lesbian/gay, bisexual, queer, transgender) within each gender group while
+ensuring the total cannot exceed the population.
+
 \end{document}
