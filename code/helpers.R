@@ -410,10 +410,36 @@ build_tract_expected_layer <- function(
         dplyr::select(puma_id, calib_lgbt_factor) %>%
         distinct(puma_id, .keep_all = TRUE)
       
-      tract_stats_cal <- tract_stats %>%
-        left_join(puma_tilt %>% select(puma_id, calib_lgbt_factor), by="puma_id") %>%
-        mutate(
-          calib_lgbt_factor = coalesce(calib_lgbt_factor, 1),
+      # IDW-smooth calibration factors to GEOID level so hard PUMA boundary
+      # discontinuities are replaced by smooth spatial transitions.
+      puma_cents <- pumas_clean |>
+        dplyr::inner_join(
+          dplyr::select(puma_tilt, puma_id, calib_lgbt_factor),
+          by = "puma_id"
+        ) |>
+        sf::st_centroid() |>
+        sf::st_transform(3857)
+
+      tract_cents <- tract_clean |>
+        dplyr::filter(GEOID %in% unique(tract_stats$GEOID)) |>
+        dplyr::select(GEOID) |>
+        sf::st_centroid() |>
+        sf::st_transform(3857)
+
+      dist_mat <- sf::st_distance(tract_cents, puma_cents)
+      dist_num <- matrix(as.numeric(dist_mat), nrow = nrow(tract_cents))
+      idw_w    <- 1 / pmax(dist_num, 1)^2
+      idw_w    <- idw_w / rowSums(idw_w)
+
+      tract_idw <- tibble::tibble(
+        GEOID             = tract_cents$GEOID,
+        calib_lgbt_factor = as.numeric(idw_w %*% puma_cents$calib_lgbt_factor)
+      )
+
+      tract_stats_cal <- tract_stats |>
+        dplyr::left_join(tract_idw, by = "GEOID") |>
+        dplyr::mutate(
+          calib_lgbt_factor = dplyr::coalesce(calib_lgbt_factor, 1),
           lgbt_m_map_raw   = lgbt_m  * calib_lgbt_factor,
           lgbt_w_map_raw   = lgbt_w  * calib_lgbt_factor,
           lgbt_nb_map_raw  = lgbt_nb * calib_lgbt_factor,
