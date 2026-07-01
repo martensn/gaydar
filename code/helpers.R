@@ -65,12 +65,17 @@ library(rmapshaper)
 # Aggregate a tract SF layer into H3 hexagons for choropleth display.
 # res = 8 (~737m across) is appropriate for city-zoom; try res = 7 for a coarser view.
 build_hex_layer <- function(tract_sf, res = 8) {
-  centroids <- sf::st_centroid(sf::st_transform(tract_sf, 4326))
+  tract_valid <- tract_sf |>
+    dplyr::filter(!sf::st_is_empty(geometry)) |>
+    sf::st_transform(4326)
+
+  centroids <- sf::st_centroid(tract_valid)
   h3_ids    <- h3jsr::point_to_cell(centroids, res = res)
 
-  tract_sf |>
+  tract_valid |>
     sf::st_drop_geometry() |>
     dplyr::mutate(h3_id = h3_ids) |>
+    dplyr::filter(!is.na(h3_id)) |>
     dplyr::group_by(h3_id) |>
     dplyr::summarise(dplyr::across(where(is.numeric), \(x) sum(x, na.rm = TRUE)),
                      .groups = "drop") |>
