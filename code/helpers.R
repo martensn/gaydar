@@ -486,6 +486,27 @@ build_tract_expected_layer <- function(
           #)
         #) |>
         dplyr::ungroup() |>
+        # Cap each gender group so LGBTQ estimates never exceed total population.
+        # scale proportionally so within-group composition is preserved.
+        dplyr::mutate(
+          cap_m  = pmin(1, total_m  / pmax(lgbt_m_map,  1e-9)),
+          cap_w  = pmin(1, total_w  / pmax(lgbt_w_map,  1e-9)),
+          cap_nb = pmin(1, total_nb / pmax(lgbt_nb_map, 1e-9)),
+          lgbt_m_map   = lgbt_m_map   * cap_m,
+          lgbt_w_map   = lgbt_w_map   * cap_w,
+          lgbt_nb_map  = lgbt_nb_map  * cap_nb,
+          lg_m_map     = lg_m_map     * cap_m,
+          lg_w_map     = lg_w_map     * cap_w,
+          lg_nb_map    = lg_nb_map    * cap_nb,
+          bi_m_map     = bi_m_map     * cap_m,
+          bi_w_map     = bi_w_map     * cap_w,
+          bi_nb_map    = bi_nb_map    * cap_nb,
+          queer_m_map  = queer_m_map  * cap_m,
+          queer_w_map  = queer_w_map  * cap_w,
+          queer_nb_map = queer_nb_map * cap_nb,
+          trans_m_map  = trans_m_map  * cap_m,
+          trans_w_map  = trans_w_map  * cap_w
+        ) |>
         dplyr::mutate(
           shr_lgbt_m_map = lgbt_m_map / pmax(total_m, 1),
           shr_lgbt_w_map = lgbt_w_map / pmax(total_w, 1),
