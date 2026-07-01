@@ -260,6 +260,8 @@ server <- function(input, output, session) {
       )
       tmp <- tmp[sf::st_geometry_type(tmp) %in% c("POLYGON", "MULTIPOLYGON"), ]
       tmp <- rmapshaper::ms_simplify(tmp, keep = 0.05, keep_shapes = TRUE)
+      tmp <- sf::st_make_valid(tmp)
+      tmp <- tmp[!sf::st_is_empty(tmp), ]
       saveRDS(tmp, cache_path)
       tmp
     }

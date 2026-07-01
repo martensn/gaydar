@@ -69,7 +69,10 @@ build_hex_layer <- function(tract_sf, res = 8) {
     dplyr::filter(!sf::st_is_empty(geometry)) |>
     sf::st_transform(4326) |>
     sf::st_make_valid() |>
-    dplyr::filter(!sf::st_is_empty(geometry))
+    dplyr::filter(
+      !sf::st_is_empty(geometry),
+      sf::st_geometry_type(geometry) %in% c("POLYGON", "MULTIPOLYGON")
+    )
 
   centroids <- sf::st_centroid(tract_valid)
   h3_ids    <- h3jsr::point_to_cell(centroids, res = res)
