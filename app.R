@@ -266,16 +266,15 @@ server <- function(input, output, session) {
       tmp
     }
 
+    # Ensure geometries are valid before caching — st_intersection downstream
+    # will crash silently (caught by safe_summarize) on any bad geometry
+    out <- sf::st_make_valid(out)
+    out <- out[sf::st_is_valid(out) & !sf::st_is_empty(out), ]
+
     session_cache(modifyList(cache, setNames(list(out), state)))
     out
   })
   
-  # ---- H3 hex layer for choropleth display (built from tract layer) ----
-  hex_sf <- reactive({
-    req(bg_sf())
-    build_hex_layer(bg_sf(), res = 8)
-  })
-
   # ---- 10-mile radius ----
   radius_bg <- reactive({
     req(bg_sf(), point_sf(), input$radius_miles)
@@ -327,9 +326,9 @@ server <- function(input, output, session) {
   })
   
   bg_map_layer <- reactive({
-    req(hex_sf(), input$metric, input$gender)
+    req(bg_sf(), input$metric, input$gender)
 
-    sf_obj <- hex_sf()
+    sf_obj <- bg_sf()
 
     cols <- unlist(metric_gender_cols[[input$metric]][input$gender])
     req(length(cols) > 0)
@@ -343,11 +342,11 @@ server <- function(input, output, session) {
         ),
         shr_selected = numerator / pmax(denominator, 1),
         label = sprintf(
-        "<strong>Hex Cell:</strong> %s<br/>
+        "<strong>Census Tract:</strong> %s<br/>
          <strong>Estimate:</strong> %s<br/>
          <strong>Population:</strong> %s<br/>
          <strong>Share:</strong> %.1f%%",
-          h3_id,
+          GEOID,
           formatC(numerator, format = "f", digits = 0, big.mark = ","),
           formatC(denominator, format = "f", digits = 0, big.mark = ","),
           shr_selected * 100) |>
