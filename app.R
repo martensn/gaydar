@@ -267,6 +267,12 @@ server <- function(input, output, session) {
     out
   })
   
+  # ---- H3 hex layer for choropleth display (built from tract layer) ----
+  hex_sf <- reactive({
+    req(bg_sf())
+    build_hex_layer(bg_sf(), res = 8)
+  })
+
   # ---- 10-mile radius ----
   radius_bg <- reactive({
     req(bg_sf(), point_sf(), input$radius_miles)
@@ -318,14 +324,13 @@ server <- function(input, output, session) {
   })
   
   bg_map_layer <- reactive({
-    req(bg_sf(), input$metric, input$gender)
-    
-    sf_obj <- bg_sf()
-    sf_rad <- radius_bg() |> st_drop_geometry()
-    
+    req(hex_sf(), input$metric, input$gender)
+
+    sf_obj <- hex_sf()
+
     cols <- unlist(metric_gender_cols[[input$metric]][input$gender])
     req(length(cols) > 0)
-    
+
     sf_obj %>%
       mutate(
         numerator = rowSums(across(all_of(cols)), na.rm = TRUE),
@@ -334,16 +339,15 @@ server <- function(input, output, session) {
           na.rm = TRUE
         ),
         shr_selected = numerator / pmax(denominator, 1),
-        # ---- interactive label ----
         label = sprintf(
-        "<strong>Block Group:</strong> %s<br/>
-         <strong>Numerator:</strong> %s<br/>
-         <strong>Denominator:</strong> %s<br/>
-         <strong>Share:</strong> %.0f",
-          GEOID,
+        "<strong>Hex Cell:</strong> %s<br/>
+         <strong>Estimate:</strong> %s<br/>
+         <strong>Population:</strong> %s<br/>
+         <strong>Share:</strong> %.1f%%",
+          h3_id,
           formatC(numerator, format = "f", digits = 0, big.mark = ","),
           formatC(denominator, format = "f", digits = 0, big.mark = ","),
-          shr_selected*100) |>
+          shr_selected * 100) |>
           lapply(htmltools::HTML)
       )
   })
