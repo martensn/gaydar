@@ -7,8 +7,7 @@ library(stringr)
 library(tidycensus)
 
 CRS_LEAFLET <- 4326
-#root_dir = "/Users/nickmartens/Desktop/gaydar"
-root_dir = "~/Library/Mobile Documents/com~apple~CloudDocs/Desktop/gaydar"
+root_dir <- "."
 # ACS B01001 detailed age-sex counts
 B01001_VARS <- c(
   total = "B01001_001",

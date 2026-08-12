@@ -14,6 +14,7 @@ library(htmltools)
 library(plotly)
 library(rmapshaper)
 library(h3jsr)
+library(shinycssloaders)
 
 options(tigris_use_cache = TRUE)
 
@@ -48,9 +49,30 @@ ui <- fluidPage(
       .donut-panel {
         flex: 0 0 300px;
       }
+
+      /* shinycssloaders wraps each output in a container div that doesn't
+         inherit height, which breaks height:100% on leafletOutput/plotlyOutput
+         inside this flex layout (Leaflet in particular renders a blank map if
+         its container is 0-height at init) */
+      .shiny-spinner-output-container {
+        height: 100%;
+      }
+
+      @media (max-width: 767px) {
+        .fill-height {
+          height: auto;
+        }
+        .map-panel {
+          min-height: 400px;
+        }
+        .donut-panel {
+          flex: 0 0 auto;
+          min-height: 300px;
+        }
+      }
     "))
   ),
-  titlePanel("Gaydar"),
+  titlePanel(title = "Gaydar", windowTitle = "Gaydar — LGBTQ Population Estimator"),
   sidebarLayout(
     sidebarPanel(
       textInput("street", "Street Address", placeholder = "123 Main St"),
@@ -77,28 +99,34 @@ ui <- fluidPage(
         ),
         selected = "lgbt"
       ),
-      
+
       checkboxGroupInput(
         "gender",
         "Gender",
         choices = c("Man" = "m", "Woman" = "w", "Non-binary" = "nb"),
         selected = c("m", "w", "nb")
       ),
-      actionButton("go", "Analyze location")
+      actionButton("go", "Analyze location"),
+      helpText("Estimates are precomputed for all 50 states and DC, so results usually appear within a few seconds."),
+      helpText(
+        tags$a(href = "https://github.com/martensn/gaydar/tree/main", target = "_blank", "Git repository"),
+        " · ",
+        tags$a(href = "https://github.com/martensn/gaydar/blob/main/docs/methods.pdf", target = "_blank", "Methodology")
+      )
     ),
-    
+
     mainPanel(
       div(
         class = "fill-height",
-        
+
         div(
           class = "map-panel",
-          leafletOutput("map", height = "100%")
+          shinycssloaders::withSpinner(leafletOutput("map", height = "100%"), color = "#1b9e77")
         ),
-        
+
         div(
           class = "donut-panel",
-          plotlyOutput("composition_plot", height = "100%")
+          shinycssloaders::withSpinner(plotlyOutput("composition_plot", height = "100%"), color = "#1b9e77")
         )
       )
     )
@@ -220,11 +248,6 @@ server <- function(input, output, session) {
       crs = 4326
     )
   })
-  observe({
-    cat("point_sf() is:\n")
-    print(try(point_sf(), silent = TRUE))
-  })
-  
   # ---- session-level state cache (avoids re-reading disk for repeated state) ----
   session_cache <- reactiveVal(list())
 
@@ -251,19 +274,26 @@ server <- function(input, output, session) {
       readRDS(cache_path)
     } else {
       message("Building state tract layer: ", state, " 2023")
-      tmp <- build_tract_expected_layer(
-        state_abbr      = state,
-        year            = 2023,
-        rates           = rates,
-        use_calibration = TRUE,
-        gamma           = 0.5
+      withProgress(
+        message = paste0("Fetching live Census data for ", state, " (first request for a new state can take up to a minute)"),
+        value = 0.2,
+        {
+          tmp <- build_tract_expected_layer(
+            state_abbr      = state,
+            year            = 2023,
+            rates           = rates,
+            use_calibration = TRUE,
+            gamma           = 0.5
+          )
+          incProgress(0.5, detail = "Simplifying geometry")
+          tmp <- tmp[sf::st_geometry_type(tmp) %in% c("POLYGON", "MULTIPOLYGON"), ]
+          tmp <- rmapshaper::ms_simplify(tmp, keep = 0.05, keep_shapes = TRUE)
+          tmp <- sf::st_make_valid(tmp)
+          tmp <- tmp[!sf::st_is_empty(tmp), ]
+          saveRDS(tmp, cache_path)
+          tmp
+        }
       )
-      tmp <- tmp[sf::st_geometry_type(tmp) %in% c("POLYGON", "MULTIPOLYGON"), ]
-      tmp <- rmapshaper::ms_simplify(tmp, keep = 0.05, keep_shapes = TRUE)
-      tmp <- sf::st_make_valid(tmp)
-      tmp <- tmp[!sf::st_is_empty(tmp), ]
-      saveRDS(tmp, cache_path)
-      tmp
     }
 
     # Ensure geometries are valid before caching — st_intersection downstream
@@ -535,13 +565,7 @@ server <- function(input, output, session) {
     
     pt  <- st_transform(point_sf(), 4326)
     bgs <- st_transform(bg_map_layer(), 4326)
-    
-    message("STATE: ", selected_state())
-    message("nrow(bg_sf()): ", nrow(bgs))
-    message("nrow(bg_map_layer()): ", nrow(bg_map_layer()))
-    print(table(as.character(sf::st_geometry_type(bg_map_layer()))))
-    print(sum(sf::st_is_empty(bg_map_layer())))
-    
+
     # ---- FIX 1: geometry collections ----
     bgs <- bgs |>
       sf::st_make_valid()
