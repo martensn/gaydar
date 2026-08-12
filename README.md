@@ -1,6 +1,6 @@
 # Gaydar: Estimating Local LGBTQ Populations
 
-Have you ever wondered how many LGBTQ people live within a ten mile radius of any address in the United States or what share of the people in your community are non-binary.
+Have you ever wondered how many LGBTQ people live within a ten mile radius of any address in the United States **or** what share of the people in your community are non-binary?
 Gaydar answers this question (and any related inquiries about the spatial distribution of different members of the LGBTQ+ community). 
 I focus on adult (18+) gay and lesbian, bisexual, queer, and transgender populations (sorry asexuals), split into three mutually exclusive and collectively exhaustive gender identities: men, women, and non-binary people. 
 
