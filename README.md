@@ -76,9 +76,9 @@ Population projections are anchored to **ACS 5-year estimates**, which provide s
 
 Specifically, the pipeline uses:
 
-* [Table B01001 (Sex by Age)](https://censusreporter.org/tables/B01001/) to obtain population counts by **sex assigned at birth** and granular age bins, measured at the **block-group** level.
+* [Table B01001 (Sex by Age)](https://censusreporter.org/tables/B01001/) to obtain population counts by **sex assigned at birth** and granular age bins, measured at the **tract** level.
 * [Table B09019 (Household Type by Relationship)](https://censusreporter.org/tables/B09019/) informs later spatial reweighting within states, measured at the **PUMA** level
 
-Because the Household Pulse Survey (HPS) and ACS use different age groupings, HPS respondents are mapped into **ACS-compatible age bins** prior to estimation. This ensures that estimated LGBTQ identification rates and gender-composition shares can be directly applied to ACS population counts without interpolation or extrapolation.
+Because the Household Pulse Survey (HPS) and ACS use different age groupings, HPS respondents are mapped into ACS-compatible age bins prior to estimation. This ensures that estimated LGBTQ identification rates and gender-composition shares can be directly applied to ACS population counts without interpolation or extrapolation.
 
 ---

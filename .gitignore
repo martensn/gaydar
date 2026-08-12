@@ -2,6 +2,8 @@
 .Rhistory
 .RData
 .Rproj.user/
+.Renviron
+.Rapp.history
 
 # ---- OS ----
 .DS_Store

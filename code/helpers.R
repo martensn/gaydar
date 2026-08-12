@@ -1,5 +1,5 @@
 # R/helpers.R
-# Utilities for building a BG-level sf layer with expected LGB counts/shares.
+# Utilities for building a tract-level sf layer with expected LGBTQ counts/shares.
 library(sf)
 library(dplyr)
 library(tidyr)
@@ -7,8 +7,7 @@ library(stringr)
 library(tidycensus)
 
 CRS_LEAFLET <- 4326
-root_dir = "/Users/nickmartens/Desktop/gaydar"
-
+root_dir <- "."
 # ACS B01001 detailed age-sex counts
 B01001_VARS <- c(
   total = "B01001_001",
@@ -59,6 +58,36 @@ acs_age_bins <- tibble::tribble(
   85, 120, "85+", "62+"
 )
 
+library(h3jsr)
+library(rmapshaper)
+
+# Aggregate a tract SF layer into H3 hexagons for choropleth display.
+# res = 8 (~737m across) is appropriate for city-zoom; try res = 7 for a coarser view.
+build_hex_layer <- function(tract_sf, res = 8) {
+  tract_valid <- tract_sf |>
+    dplyr::filter(!sf::st_is_empty(geometry)) |>
+    sf::st_transform(4326) |>
+    sf::st_make_valid() |>
+    dplyr::filter(
+      !sf::st_is_empty(geometry),
+      sf::st_geometry_type(geometry) %in% c("POLYGON", "MULTIPOLYGON"),
+      sf::st_is_valid(geometry)
+    )
+
+  centroids <- sf::st_centroid(tract_valid)
+  h3_ids    <- h3jsr::point_to_cell(centroids, res = res)
+
+  tract_valid |>
+    sf::st_drop_geometry() |>
+    dplyr::mutate(h3_id = h3_ids) |>
+    dplyr::filter(!is.na(h3_id)) |>
+    dplyr::group_by(h3_id) |>
+    dplyr::summarise(dplyr::across(where(is.numeric), \(x) sum(x, na.rm = TRUE)),
+                     .groups = "drop") |>
+    dplyr::mutate(geometry = h3jsr::cell_to_polygon(h3_id, simple = FALSE)$geometry) |>
+    sf::st_as_sf(crs = 4326)
+}
+
 get_state_choices <- function() {
   tigris::states(cb = TRUE, year = 2023) |>
     sf::st_drop_geometry() |>
@@ -69,11 +98,10 @@ get_state_choices <- function() {
 
 
 # Convert ACS wide B01001 into long with sex + acs_bin for adults only
-acs_wide_to_long_adults <- function(bg_wide, bg_puma_xwalk) {
-  # bg_wide: sf with columns matching names(B01001_VARS), including GEOID and geometry
-  long <- bg_wide |>
+acs_wide_to_long_adults <- function(tract_wide, tract_puma_xwalk) {
+  long <- tract_wide |>
     sf::st_drop_geometry() |>
-    inner_join(bg_puma_xwalk, by = "GEOID", relationship = "one-to-many") %>%
+    inner_join(tract_puma_xwalk, by = "GEOID", relationship = "one-to-many") %>%
     tidyr::pivot_longer(cols = dplyr::all_of(names(B01001_VARS)),
                         names_to = "var", values_to = "pop") |>
     dplyr::mutate(
@@ -178,16 +206,16 @@ metric_gender_cols <- list(
 
 
 
-build_bg_expected_layer <- function(
+build_tract_expected_layer <- function(
     state_abbr,
     year,
     rates,
     use_calibration = TRUE,
     gamma = 1) {
-  
-  # --- BG-level age-sex data ---
+
+  # --- Tract-level age-sex data ---
   acs_raw <- tidycensus::get_acs(
-    geography = "block group",
+    geography = "tract",
     variables = B01001_VARS,
     state = state_abbr,
     year = year,
@@ -197,7 +225,7 @@ build_bg_expected_layer <- function(
     cache_table = TRUE
   )
   
-  bg_wide <- acs_raw |>
+  tract_wide <- acs_raw |>
     dplyr::select(GEOID, variable, estimate, geometry) |>
     tidyr::pivot_wider(
       names_from = "variable",
@@ -205,8 +233,8 @@ build_bg_expected_layer <- function(
       values_fill = 0
     ) |>
     sf::st_as_sf()
-  
-  # --- Map BG → PUMA (spatial join once) ---
+
+  # --- Map tract → PUMA (spatial join once) ---
   pumas <- tigris::pumas(
     state = state_abbr,
     year = 2019,
@@ -225,15 +253,15 @@ build_bg_expected_layer <- function(
     select(cbsa_id = cbsa_code, county_fips = GeoFIPS) %>%
     left_join(cbsas, by = "cbsa_id")
   
-  bg_clean <- bg_wide |>
+  tract_clean <- tract_wide |>
     st_transform(st_crs(pumas)) |>
     sf::st_make_valid()
-  
+
   pumas_clean <- pumas |>
     sf::st_make_valid()
-  
-  bg_puma_xwalk <- st_intersection(
-    bg_clean |> select(GEOID),
+
+  tract_puma_xwalk <- st_intersection(
+    tract_clean |> select(GEOID),
     pumas_clean |> select(puma_id)
   ) |>
     # re-validate intersection
@@ -251,9 +279,10 @@ build_bg_expected_layer <- function(
     left_join(county_cbsa_xwalk, by = "county_fips")
   
   # --- Adult population long ---
-  long <- acs_wide_to_long_adults(bg_wide, bg_puma_xwalk)
+  long <- acs_wide_to_long_adults(tract_wide, tract_puma_xwalk)
   
   rates <- readRDS(file.path(root_dir,"data/hps/hps_acs_rates.rds"))
+  gsf_eb_bin <- readRDS(file.path(root_dir,"data/hps","age_bin_gender_sexuality.rds"))
   
   rates_state <- rates %>%
     filter(state_abbr == !!state_abbr) %>%
@@ -294,8 +323,7 @@ build_bg_expected_layer <- function(
                 values_from = gender_pop,
                 values_fill = 0)
   
-  cat_cols <- grep("^(m|w|nb)_", names(bg_stats), value = TRUE) 
-  bg_stats <- long2 %>%
+  tract_stats <- long2 %>%
     ungroup() %>%
     mutate(
       lgbt_cat = tolower(lgbt_cat),
@@ -336,7 +364,7 @@ build_bg_expected_layer <- function(
            #est_trans_uncal = w_t_lg + w_t_bisexual + w_t_queer + w_t_straight + m_t_lg + m_t_bisexual + m_t_queer + m_t_straight)
            #shr_lgbt_uncal = est_lgbt_uncal/total_pop)
   
-  #bg_stats <- long2 %>%
+  #tract_stats <- long2 %>%
   #  group_by(GEOID, puma_id) %>%
   #  summarise(
   #     = sum(pop, na.rm = TRUE),
@@ -361,7 +389,7 @@ build_bg_expected_layer <- function(
     
     if (!is.null(signal)) {
       
-      puma_uncal <- bg_stats %>%
+      puma_uncal <- tract_stats %>%
         group_by(puma_id) %>%
         summarise(
           lgbt_uncal = sum(est_lgbt_uncal, na.rm = TRUE),
@@ -381,10 +409,36 @@ build_bg_expected_layer <- function(
         dplyr::select(puma_id, calib_lgbt_factor) %>%
         distinct(puma_id, .keep_all = TRUE)
       
-      bg_stats2 <- bg_stats %>%
-        left_join(puma_tilt %>% select(puma_id, calib_lgbt_factor), by="puma_id") %>%
-        mutate(
-          calib_lgbt_factor = coalesce(calib_lgbt_factor, 1),
+      # IDW-smooth calibration factors to GEOID level so hard PUMA boundary
+      # discontinuities are replaced by smooth spatial transitions.
+      puma_cents <- pumas_clean |>
+        dplyr::inner_join(
+          dplyr::select(puma_tilt, puma_id, calib_lgbt_factor),
+          by = "puma_id"
+        ) |>
+        sf::st_centroid() |>
+        sf::st_transform(3857)
+
+      tract_cents <- tract_clean |>
+        dplyr::filter(GEOID %in% unique(tract_stats$GEOID)) |>
+        dplyr::select(GEOID) |>
+        sf::st_centroid() |>
+        sf::st_transform(3857)
+
+      dist_mat <- sf::st_distance(tract_cents, puma_cents)
+      dist_num <- matrix(as.numeric(dist_mat), nrow = nrow(tract_cents))
+      idw_w    <- 1 / pmax(dist_num, 1)^2
+      idw_w    <- idw_w / rowSums(idw_w)
+
+      tract_idw <- tibble::tibble(
+        GEOID             = tract_cents$GEOID,
+        calib_lgbt_factor = as.numeric(idw_w %*% puma_cents$calib_lgbt_factor)
+      )
+
+      tract_stats_cal <- tract_stats |>
+        dplyr::left_join(tract_idw, by = "GEOID") |>
+        dplyr::mutate(
+          calib_lgbt_factor = dplyr::coalesce(calib_lgbt_factor, 1),
           lgbt_m_map_raw   = lgbt_m  * calib_lgbt_factor,
           lgbt_w_map_raw   = lgbt_w  * calib_lgbt_factor,
           lgbt_nb_map_raw  = lgbt_nb * calib_lgbt_factor,
@@ -407,10 +461,10 @@ build_bg_expected_layer <- function(
         )
       
       scale_lgbt <- 
-        sum(bg_stats$lgbt_m + bg_stats$lgbt_w + bg_stats$lgbt_nb, na.rm = TRUE) /
-        sum(bg_stats2$lgbt_m_map_raw + bg_stats2$lgbt_w_map_raw + bg_stats2$lgbt_nb_map_raw, na.rm = TRUE)
+        sum(tract_stats$lgbt_m + tract_stats$lgbt_w + tract_stats$lgbt_nb, na.rm = TRUE) /
+        sum(tract_stats_cal$lgbt_m_map_raw + tract_stats_cal$lgbt_w_map_raw + tract_stats_cal$lgbt_nb_map_raw, na.rm = TRUE)
       
-      bg_stats2 <- bg_stats2 %>%
+      tract_stats_cal <- tract_stats_cal %>%
         mutate(
           lgbt_m_map   = lgbt_m_map_raw  * scale_lgbt,
           lgbt_w_map   = lgbt_w_map_raw  * scale_lgbt,
@@ -457,6 +511,27 @@ build_bg_expected_layer <- function(
           #)
         #) |>
         dplyr::ungroup() |>
+        # Cap each gender group so LGBTQ estimates never exceed total population.
+        # scale proportionally so within-group composition is preserved.
+        dplyr::mutate(
+          cap_m  = pmin(1, total_m  / pmax(lgbt_m_map,  1e-9)),
+          cap_w  = pmin(1, total_w  / pmax(lgbt_w_map,  1e-9)),
+          cap_nb = pmin(1, total_nb / pmax(lgbt_nb_map, 1e-9)),
+          lgbt_m_map   = lgbt_m_map   * cap_m,
+          lgbt_w_map   = lgbt_w_map   * cap_w,
+          lgbt_nb_map  = lgbt_nb_map  * cap_nb,
+          lg_m_map     = lg_m_map     * cap_m,
+          lg_w_map     = lg_w_map     * cap_w,
+          lg_nb_map    = lg_nb_map    * cap_nb,
+          bi_m_map     = bi_m_map     * cap_m,
+          bi_w_map     = bi_w_map     * cap_w,
+          bi_nb_map    = bi_nb_map    * cap_nb,
+          queer_m_map  = queer_m_map  * cap_m,
+          queer_w_map  = queer_w_map  * cap_w,
+          queer_nb_map = queer_nb_map * cap_nb,
+          trans_m_map  = trans_m_map  * cap_m,
+          trans_w_map  = trans_w_map  * cap_w
+        ) |>
         dplyr::mutate(
           shr_lgbt_m_map = lgbt_m_map / pmax(total_m, 1),
           shr_lgbt_w_map = lgbt_w_map / pmax(total_w, 1),
@@ -477,7 +552,7 @@ build_bg_expected_layer <- function(
     } 
   }
   
-  bg_puma_xwalk |>
-    dplyr::left_join(bg_stats2, by = c("GEOID","puma_id")) |>
+  tract_puma_xwalk |>
+    dplyr::left_join(tract_stats_cal, by = c("GEOID","puma_id")) |>
     sf::st_transform(CRS_LEAFLET)
 }

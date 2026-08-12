@@ -12,6 +12,9 @@ library(tidycensus)
 library(tigris)
 library(htmltools)
 library(plotly)
+library(rmapshaper)
+library(h3jsr)
+library(shinycssloaders)
 
 options(tigris_use_cache = TRUE)
 
@@ -46,9 +49,30 @@ ui <- fluidPage(
       .donut-panel {
         flex: 0 0 300px;
       }
+
+      /* shinycssloaders wraps each output in a container div that doesn't
+         inherit height, which breaks height:100% on leafletOutput/plotlyOutput
+         inside this flex layout (Leaflet in particular renders a blank map if
+         its container is 0-height at init) */
+      .shiny-spinner-output-container {
+        height: 100%;
+      }
+
+      @media (max-width: 767px) {
+        .fill-height {
+          height: auto;
+        }
+        .map-panel {
+          min-height: 400px;
+        }
+        .donut-panel {
+          flex: 0 0 auto;
+          min-height: 300px;
+        }
+      }
     "))
   ),
-  titlePanel("Gaydar"),
+  titlePanel(title = "Gaydar", windowTitle = "Gaydar — LGBTQ Population Estimator"),
   sidebarLayout(
     sidebarPanel(
       textInput("street", "Street Address", placeholder = "123 Main St"),
@@ -75,28 +99,34 @@ ui <- fluidPage(
         ),
         selected = "lgbt"
       ),
-      
+
       checkboxGroupInput(
         "gender",
         "Gender",
         choices = c("Man" = "m", "Woman" = "w", "Non-binary" = "nb"),
         selected = c("m", "w", "nb")
       ),
-      actionButton("go", "Analyze location")
+      actionButton("go", "Analyze location"),
+      helpText("Estimates are precomputed for all 50 states and DC, so results usually appear within a few seconds."),
+      helpText(
+        tags$a(href = "https://github.com/martensn/gaydar/tree/main", target = "_blank", "Git repository"),
+        " · ",
+        tags$a(href = "https://github.com/martensn/gaydar/blob/main/docs/methods.pdf", target = "_blank", "Methodology")
+      )
     ),
-    
+
     mainPanel(
       div(
         class = "fill-height",
-        
+
         div(
           class = "map-panel",
-          leafletOutput("map", height = "100%")
+          shinycssloaders::withSpinner(leafletOutput("map", height = "100%"), color = "#1b9e77")
         ),
-        
+
         div(
           class = "donut-panel",
-          plotlyOutput("composition_plot", height = "100%")
+          shinycssloaders::withSpinner(plotlyOutput("composition_plot", height = "100%"), color = "#1b9e77")
         )
       )
     )
@@ -218,38 +248,60 @@ server <- function(input, output, session) {
       crs = 4326
     )
   })
-  observe({
-    cat("point_sf() is:\n")
-    print(try(point_sf(), silent = TRUE))
-  })
-  
-  # ---- load BG layer for inferred state ----
+  # ---- session-level state cache (avoids re-reading disk for repeated state) ----
+  session_cache <- reactiveVal(list())
+
+  # ---- load tract layer for inferred state ----
   bg_sf <- reactive({
     state <- selected_state()
+
+    cache <- session_cache()
+    if (!is.null(cache[[state]])) {
+      message("Session cache hit: ", state)
+      return(cache[[state]])
+    }
+
     rates <- readRDS(file.path(root_dir,"data/hps/hps_acs_rates.rds"))
-    
-    cache_dir <- file.path(root_dir,"data/cache", "bg_state")
+
+    cache_dir <- file.path(root_dir,"data/cache", "tract_state")
     dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
-    
-    cache_key  <- paste0("bg_", state, "_2023_calTRUE_g0.5.rds")
+
+    cache_key  <- paste0("tract_", state, "_2023_calTRUE_g0.5.rds")
     cache_path <- file.path(cache_dir, cache_key)
-    
+
     out <- if (file.exists(cache_path)) {
       message("Loading cached: ", cache_path)
       readRDS(cache_path)
     } else {
-      message("Building state BG layer: ", state, " 2023")
-      tmp <- build_bg_expected_layer(
-        state_abbr      = state,
-        year            = 2023,
-        rates           = rates,
-        use_calibration = TRUE,
-        gamma           = 0.5
+      message("Building state tract layer: ", state, " 2023")
+      withProgress(
+        message = paste0("Fetching live Census data for ", state, " (first request for a new state can take up to a minute)"),
+        value = 0.2,
+        {
+          tmp <- build_tract_expected_layer(
+            state_abbr      = state,
+            year            = 2023,
+            rates           = rates,
+            use_calibration = TRUE,
+            gamma           = 0.5
+          )
+          incProgress(0.5, detail = "Simplifying geometry")
+          tmp <- tmp[sf::st_geometry_type(tmp) %in% c("POLYGON", "MULTIPOLYGON"), ]
+          tmp <- rmapshaper::ms_simplify(tmp, keep = 0.05, keep_shapes = TRUE)
+          tmp <- sf::st_make_valid(tmp)
+          tmp <- tmp[!sf::st_is_empty(tmp), ]
+          saveRDS(tmp, cache_path)
+          tmp
+        }
       )
-      saveRDS(tmp, cache_path)
-      tmp
     }
-    
+
+    # Ensure geometries are valid before caching — st_intersection downstream
+    # will crash silently (caught by safe_summarize) on any bad geometry
+    out <- sf::st_make_valid(out)
+    out <- out[sf::st_is_valid(out) & !sf::st_is_empty(out), ]
+
+    session_cache(modifyList(cache, setNames(list(out), state)))
     out
   })
   
@@ -305,13 +357,12 @@ server <- function(input, output, session) {
   
   bg_map_layer <- reactive({
     req(bg_sf(), input$metric, input$gender)
-    
+
     sf_obj <- bg_sf()
-    sf_rad <- radius_bg() |> st_drop_geometry()
-    
+
     cols <- unlist(metric_gender_cols[[input$metric]][input$gender])
     req(length(cols) > 0)
-    
+
     sf_obj %>%
       mutate(
         numerator = rowSums(across(all_of(cols)), na.rm = TRUE),
@@ -320,16 +371,15 @@ server <- function(input, output, session) {
           na.rm = TRUE
         ),
         shr_selected = numerator / pmax(denominator, 1),
-        # ---- interactive label ----
         label = sprintf(
-        "<strong>Block Group:</strong> %s<br/>
-         <strong>Numerator:</strong> %s<br/>
-         <strong>Denominator:</strong> %s<br/>
-         <strong>Share:</strong> %.0f",
+        "<strong>Census Tract:</strong> %s<br/>
+         <strong>Estimate:</strong> %s<br/>
+         <strong>Population:</strong> %s<br/>
+         <strong>Share:</strong> %.1f%%",
           GEOID,
           formatC(numerator, format = "f", digits = 0, big.mark = ","),
           formatC(denominator, format = "f", digits = 0, big.mark = ","),
-          shr_selected*100) |>
+          shr_selected * 100) |>
           lapply(htmltools::HTML)
       )
   })
@@ -515,13 +565,21 @@ server <- function(input, output, session) {
     
     pt  <- st_transform(point_sf(), 4326)
     bgs <- st_transform(bg_map_layer(), 4326)
-    
+
     # ---- FIX 1: geometry collections ----
     bgs <- bgs |>
-      sf::st_make_valid() |>
-      sf::st_collection_extract("POLYGON") |>
-      sf::st_cast("MULTIPOLYGON", warn = FALSE)
+      sf::st_make_valid()
     
+    bgs <- bgs[!sf::st_is_empty(bgs), ]
+    
+    # keep only polygonal geometries
+    geom_types <- as.character(sf::st_geometry_type(bgs))
+    bgs <- bgs[geom_types %in% c("POLYGON", "MULTIPOLYGON"), ]
+    
+    # optional: harmonize type
+    if (nrow(bgs) > 0) {
+      bgs <- sf::st_cast(bgs, "MULTIPOLYGON", warn = FALSE)
+    } 
     # ---- winsorized color scale ----
     vals <- bgs$shr_selected
     qs <- quantile(vals, c(0.01, 0.99), na.rm = TRUE)
