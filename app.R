@@ -318,14 +318,23 @@ server <- function(input, output, session) {
     
     st_intersection(bg_sf(), buf)
   })
-  cbsa_xwalk <- read_csv(file.path(root_dir,"data/unified_cbsa.csv"))
-  
   metro_bg <- reactive({
-    county_fips <- address_point()$county_fips
-    cbsa_id <- cbsa_xwalk$cbsa_code[cbsa_xwalk$GeoFIPS == county_fips][1]
-    
+    req(point_sf(), bg_sf())
+
+    # Determine the user's CBSA by finding which tract in the (already
+    # correctly-assigned, including spatial-fallback-resolved) tract layer
+    # actually contains their point, rather than doing a second, independent
+    # county-FIPS lookup against the static crosswalk CSV -- that separate
+    # lookup used to be able to disagree with the tract layer's own cbsa_id
+    # (e.g. for Connecticut, whose planning-region FIPS codes the crosswalk
+    # doesn't map to a real CBSA), which was the source of the Connecticut
+    # metro-area bug.
+    pt <- sf::st_transform(point_sf(), sf::st_crs(bg_sf()))
+    hit <- suppressWarnings(sf::st_join(pt, bg_sf() |> dplyr::select(cbsa_id), join = sf::st_intersects))
+    cbsa_id <- hit$cbsa_id[1]
+
     validate(need(!is.na(cbsa_id), "Address not in a CBSA."))
-    
+
     bg_sf() |> filter(cbsa_id == !!cbsa_id)
   })
   
