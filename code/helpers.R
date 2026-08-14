@@ -242,13 +242,15 @@ build_tract_expected_layer <- function(
   ) |>
     dplyr::select(puma_id = GEOID10)
   
-  cbsas <- tigris::core_based_statistical_areas(
+  cbsas_sf <- tigris::core_based_statistical_areas(
     year = 2019,
     cb = TRUE
   ) |>
     dplyr::select(cbsa_id = GEOID, cbsa_name = NAME) |>
-    st_drop_geometry()
-  
+    sf::st_make_valid()
+
+  cbsas <- cbsas_sf |> st_drop_geometry()
+
   county_cbsa_xwalk = read_csv(file.path(root_dir,"data/unified_cbsa.csv")) %>%
     select(cbsa_id = cbsa_code, county_fips = GeoFIPS) %>%
     left_join(cbsas, by = "cbsa_id")
@@ -277,7 +279,45 @@ build_tract_expected_layer <- function(
     select(GEOID, puma_id, w_puma) |>
     mutate(county_fips = substr(GEOID,1,5)) |>
     left_join(county_cbsa_xwalk, by = "county_fips")
-  
+
+  # --- Spatial fallback for stale/missing county->CBSA crosswalk entries ---
+  # unified_cbsa.csv is a static county-FIPS-keyed lookup and can go stale
+  # when county-equivalent boundaries change (e.g. Connecticut replaced its
+  # 8 counties with 9 planning regions in 2022; the crosswalk's rows for the
+  # new region codes point at a placeholder "09999" CBSA that doesn't exist,
+  # so cbsa_name comes back NA even though cbsa_id is technically non-NA).
+  # Any tract without a real cbsa_name after the FIPS-based join is resolved
+  # directly against the actual CBSA polygons, which is authoritative
+  # regardless of whether the FIPS crosswalk has caught up for a given
+  # county's current code.
+  needs_fallback <- tract_puma_xwalk |>
+    filter(is.na(cbsa_name)) |>
+    distinct(GEOID) |>
+    pull(GEOID)
+
+  if (length(needs_fallback) > 0) {
+    fallback_geoms <- tract_clean |>
+      filter(GEOID %in% needs_fallback) |>
+      select(GEOID) |>
+      sf::st_transform(sf::st_crs(cbsas_sf))
+
+    fallback_match <- sf::st_join(
+      fallback_geoms, cbsas_sf, join = sf::st_intersects, largest = TRUE
+    ) |>
+      sf::st_drop_geometry() |>
+      distinct(GEOID, .keep_all = TRUE) |>
+      rename(cbsa_id_fallback = cbsa_id, cbsa_name_fallback = cbsa_name)
+
+    tract_puma_xwalk <- tract_puma_xwalk |>
+      left_join(fallback_match, by = "GEOID") |>
+      mutate(
+        use_fallback = is.na(cbsa_name),
+        cbsa_id   = dplyr::if_else(use_fallback, cbsa_id_fallback, cbsa_id),
+        cbsa_name = dplyr::if_else(use_fallback, cbsa_name_fallback, cbsa_name)
+      ) |>
+      select(-cbsa_id_fallback, -cbsa_name_fallback, -use_fallback)
+  }
+
   # --- Adult population long ---
   long <- acs_wide_to_long_adults(tract_wide, tract_puma_xwalk)
   
@@ -411,19 +451,31 @@ build_tract_expected_layer <- function(
       
       # IDW-smooth calibration factors to GEOID level so hard PUMA boundary
       # discontinuities are replaced by smooth spatial transitions.
+      #
+      # Centroids and distances are computed in geographic coordinates
+      # (EPSG:4326) rather than projected Web Mercator (EPSG:3857). Mercator
+      # has no antimeridian wraparound, so a naive projected distance between
+      # a tract at e.g. 179.5 E and one at 179.5 W treats them as being on
+      # opposite sides of the world instead of ~1 degree apart -- this
+      # silently corrupted IDW weights for Alaska's western Aleutian Islands
+      # tracts. With sf_use_s2() enabled (the default here), st_centroid()
+      # and st_distance() on geographic geometries use spherical (S2)
+      # geometry, which handles the antimeridian correctly and also avoids
+      # Mercator's latitude-dependent distance distortion (significant this
+      # far north regardless of the antimeridian issue).
       puma_cents <- pumas_clean |>
         dplyr::inner_join(
           dplyr::select(puma_tilt, puma_id, calib_lgbt_factor),
           by = "puma_id"
         ) |>
-        sf::st_centroid() |>
-        sf::st_transform(3857)
+        sf::st_transform(4326) |>
+        sf::st_centroid()
 
       tract_cents <- tract_clean |>
         dplyr::filter(GEOID %in% unique(tract_stats$GEOID)) |>
         dplyr::select(GEOID) |>
-        sf::st_centroid() |>
-        sf::st_transform(3857)
+        sf::st_transform(4326) |>
+        sf::st_centroid()
 
       dist_mat <- sf::st_distance(tract_cents, puma_cents)
       dist_num <- matrix(as.numeric(dist_mat), nrow = nrow(tract_cents))
