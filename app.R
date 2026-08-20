@@ -15,10 +15,72 @@ library(plotly)
 library(rmapshaper)
 library(h3jsr)
 library(shinycssloaders)
+library(httr)
+# jsonlite is used (via jsonlite::toJSON, fully-qualified below) but NOT
+# attached with library() -- jsonlite::validate() masks shiny::validate(),
+# which silently breaks every validate(need(...)) call in the app instead
+# of erroring loudly, since jsonlite's version doesn't call stop().
 
 options(tigris_use_cache = TRUE)
 
 source("code/helpers.R")
+
+# ---- travel-time isochrones (TravelTime API) ----
+# Requires TRAVELTIME_ID / TRAVELTIME_KEY in .Renviron (free account at
+# https://account.traveltime.com/, gitignored like CENSUS_API_KEY). Only
+# used when the user picks "car" or "transit" for the radius mode --
+# "distance" mode never touches the network, same as before.
+#
+# Returns a single-feature sf polygon (WGS84) reachable within `minutes` of
+# (lat, lng) by `mode` ("driving" or "public_transport"), or throws an error
+# with a message safe to surface via validate()/need().
+fetch_isochrone <- function(lat, lng, minutes, mode) {
+  app_id  <- Sys.getenv("TRAVELTIME_ID")
+  api_key <- Sys.getenv("TRAVELTIME_KEY")
+  if (!nzchar(app_id) || !nzchar(api_key)) {
+    stop("Travel-time isochrones aren't configured on this deployment.")
+  }
+
+  body <- list(
+    departure_searches = list(list(
+      id = "iso",
+      coords = list(lat = lat, lng = lng),
+      departure_time = strftime(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
+      travel_time = minutes * 60,
+      transportation = list(type = mode)
+    ))
+  )
+
+  resp <- httr::POST(
+    url = "https://api.traveltimeapp.com/v4/time-map",
+    httr::add_headers(
+      "Content-Type"     = "application/json",
+      "Accept"           = "application/geo+json",
+      "X-Application-Id" = app_id,
+      "X-Api-Key"        = api_key
+    ),
+    body = jsonlite::toJSON(body, auto_unbox = TRUE)
+  )
+
+  if (httr::http_error(resp)) {
+    if (httr::status_code(resp) == 429) {
+      stop("Too many isochrone requests right now -- please try again in a minute.")
+    }
+    stop("Couldn't reach the isochrone service -- try again shortly.")
+  }
+
+  txt <- httr::content(resp, "text", encoding = "UTF-8")
+  tmp <- tempfile(fileext = ".geojson")
+  on.exit(unlink(tmp))
+  writeLines(txt, tmp)
+  poly <- sf::st_read(tmp, quiet = TRUE)
+
+  if (nrow(poly) == 0) {
+    stop("No reachable area found for that travel time.")
+  }
+
+  sf::st_make_valid(poly)
+}
 
 # ---- national tract-level lookup table (loaded once per process) ----
 # Built offline by code/build_national_tract_rates.R from the same cached
@@ -75,6 +137,24 @@ aggregate_national <- function(group_col) {
 ui <- fluidPage(
   tags$head(
     tags$link(rel = "stylesheet", href = "app-theme.css"),
+    tags$script(HTML("
+      // Reconfigures the radius slider's range/step/unit when the mode
+      // dropdown changes -- Shiny's updateSliderInput() can't touch the
+      // ion.rangeSlider postfix, so this talks to the slider widget directly.
+      var radiusModeConfig = {
+        distance:          { min: 0, max: 50, step: 1, value: 10, postfix: ' mi' },
+        driving:           { min: 5, max: 60, step: 5, value: 15, postfix: ' min' },
+        public_transport:  { min: 5, max: 90, step: 5, value: 30, postfix: ' min' }
+      };
+      Shiny.addCustomMessageHandler('update_radius_slider', function(mode) {
+        var cfg = radiusModeConfig[mode];
+        var el = $('#radius_miles');
+        var slider = el.data('ionRangeSlider');
+        if (!cfg || !slider) return;
+        slider.update({ min: cfg.min, max: cfg.max, step: cfg.step, from: cfg.value, postfix: cfg.postfix });
+        el.trigger('change');
+      });
+    ")),
     tags$style(HTML("
       html, body {
         height: 100%;
@@ -140,14 +220,25 @@ ui <- fluidPage(
       textInput("city",   "city",    placeholder = "Chicago"),
       textInput("state",  "state",   placeholder = "IL"),
       textInput("zip",    "zip",     placeholder = "60637"),
+      selectInput(
+        "radius_mode",
+        "mode",
+        choices = c(
+          "distance" = "distance",
+          "car"      = "driving",
+          "transit"  = "public_transport"
+        ),
+        selected = "distance"
+      ),
       sliderInput(
         "radius_miles",
-        "Radius (miles)",
+        "radius",
         min   = 0,
         max   = 50,
         value = 10,
         step  = 1,
-        ticks = FALSE
+        ticks = FALSE,
+        post  = " mi"
       ),
       selectInput(
         "geo_level",
@@ -219,6 +310,12 @@ ui <- fluidPage(
 # ---------------------------
 
 server <- function(input, output, session) {
+
+  # ---- reconfigure the radius slider's range/unit when mode changes ----
+  observeEvent(input$radius_mode, {
+    session$sendCustomMessage("update_radius_slider", input$radius_mode)
+  }, ignoreInit = TRUE)
+
   colors <- c(
     non_lgbt = "#57534a",
     lg       = "#cc8855",
@@ -408,18 +505,42 @@ server <- function(input, output, session) {
     dissolve_geo(sf_obj, geo_level_info[[level]]$col)
   })
 
-  # ---- 10-mile radius ----
-  radius_bg <- reactive({
-    req(bg_sf(), point_sf(), input$radius_miles)
-    
+  # ---- travel-time isochrone: only (re-)fetched on "analyze", never on a
+  # bare slider drag -- the API is rate-limited, unlike the free circular
+  # buffer below, which can recompute freely as sliders move. ----
+  isochrone_shape <- eventReactive(input$go, {
+    req(input$radius_mode != "distance")
+
+    geo <- address_point()
+    iso <- tryCatch(
+      fetch_isochrone(geo$lat, geo$lon, input$radius_miles, input$radius_mode),
+      error = function(e) e
+    )
+    if (inherits(iso, "error")) {
+      validate(need(FALSE, conditionMessage(iso)))
+    }
+    iso
+  }, ignoreInit = TRUE)
+
+  # ---- radius shape: circular buffer (distance mode) or the travel-time
+  # isochrone fetched above (car/transit mode), in bg_sf()'s CRS ----
+  radius_shape <- reactive({
+    req(bg_sf(), point_sf(), input$radius_miles, input$radius_mode)
+
     pt <- st_transform(point_sf(), st_crs(bg_sf()))
-    
-    # convert miles → meters
-    dist_m <- input$radius_miles * 1609.34
-    
-    buf <- st_buffer(pt, dist = dist_m)
-    
-    st_intersection(bg_sf(), buf)
+
+    if (input$radius_mode == "distance") {
+      dist_m <- input$radius_miles * 1609.34
+      return(st_buffer(pt, dist = dist_m))
+    }
+
+    st_transform(isochrone_shape(), st_crs(bg_sf()))
+  })
+
+  # ---- area within the radius/isochrone ----
+  radius_bg <- reactive({
+    req(bg_sf(), radius_shape())
+    st_intersection(bg_sf(), radius_shape())
   })
   metro_bg <- reactive({
     req(point_sf(), bg_sf())
@@ -571,7 +692,11 @@ server <- function(input, output, session) {
     }
     
     # Build the three areas (radius label matches your area_summary())
-    rad_name <- paste0(round(input$radius_miles, 1), " mile radius")
+    rad_name <- switch(input$radius_mode,
+      distance         = paste0(round(input$radius_miles, 1), " mile radius"),
+      driving          = paste0(round(input$radius_miles, 1), " min drive"),
+      public_transport = paste0(round(input$radius_miles, 1), " min transit")
+    )
 
     s_rad   <- safe_summarize(rad_name, summarize_area(radius_bg()))
     s_metro <- safe_summarize("metro",  summarize_area(metro_bg()))
@@ -738,11 +863,12 @@ server <- function(input, output, session) {
     
   # ---- map (simple highlight) ----
   observeEvent(input$go, {
-    
-    req(point_sf(), bg_map_layer())
-    
+
+    req(point_sf(), bg_map_layer(), radius_shape())
+
     pt  <- st_transform(point_sf(), 4326)
     bgs <- st_transform(bg_map_layer(), 4326)
+    radius_outline <- st_transform(radius_shape(), 4326)
 
     # ---- FIX 1: geometry collections ----
     bgs <- bgs |>
@@ -806,10 +932,8 @@ server <- function(input, output, session) {
           bringToFront = TRUE
         )
       ) |>
-      addCircles(
-        lng = st_coordinates(pt)[1,1],
-        lat = st_coordinates(pt)[1,2],
-        radius = input$radius_miles * 1609.34,
+      addPolygons(
+        data = radius_outline,
         color = "#fffdda",
         weight = 1,
         fill = FALSE,
