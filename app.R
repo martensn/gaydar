@@ -155,6 +155,97 @@ ui <- fluidPage(
         el.trigger('change');
       });
     ")),
+    tags$script(HTML("
+      // Rainbow hover, matching the scintillate keyframe used for link
+      // hovers on martensn.github.io -- applied here to the map's hovered
+      // geography outline and the donut chart's hovered slice border,
+      // since neither is a plain <a> text link CSS can animate directly.
+      var GD_RAINBOW = ['#ff6b6b','#ffd93d','#6bcb77','#4d96ff','#9b59b6','#ff1493','#ff8c00'];
+
+      // ---- map: delegated hover on the leaflet SVG pane, so it keeps
+      // working across every clearShapes()/addPolygons() redraw without
+      // needing to re-attach listeners per tract ----
+      (function() {
+        var mapEl = document.getElementById('map');
+        if (!mapEl) return;
+        var active = null, idx = 0, timer = null, orig = null;
+
+        function start(path) {
+          if (active === path) return;
+          stop();
+          active = path;
+          orig = { stroke: path.getAttribute('stroke'), width: path.getAttribute('stroke-width') };
+          path.setAttribute('stroke-width', 2.5);
+          path.parentNode.appendChild(path); // bring to front
+          idx = 0;
+          timer = setInterval(function() {
+            idx = (idx + 1) % GD_RAINBOW.length;
+            path.setAttribute('stroke', GD_RAINBOW[idx]);
+          }, 150);
+        }
+        function stop() {
+          if (timer) clearInterval(timer);
+          timer = null;
+          if (active && orig) {
+            active.setAttribute('stroke', orig.stroke);
+            active.setAttribute('stroke-width', orig.width);
+          }
+          active = null;
+        }
+        mapEl.addEventListener('mouseover', function(e) {
+          var path = e.target.closest && e.target.closest('path.leaflet-interactive');
+          if (path) start(path);
+        });
+        mapEl.addEventListener('mouseout', function(e) {
+          var toEl = e.relatedTarget;
+          var stillInside = toEl && toEl.closest && toEl.closest('path.leaflet-interactive') === active;
+          if (!stillInside) stop();
+        });
+      })();
+
+      // ---- donut chart: cycle the hovered slice's border via Plotly's
+      // JS API; re-attached (idempotently) on every Shiny render since
+      // Plotly.react can occasionally hand back a fresh graph div ----
+      function gdAttachDonutRainbow() {
+        var gd = document.getElementById('composition_plot');
+        if (!gd || !gd.on || gd._gdRainbowHooked) return;
+        gd._gdRainbowHooked = true;
+        var idx = 0, timer = null, trace = null, point = null, origColor = null;
+
+        gd.on('plotly_hover', function(ev) {
+          var pt = ev.points && ev.points[0];
+          if (!pt || !pt.data || !pt.data.marker.line) return;
+          trace = pt.curveNumber;
+          point = pt.pointNumber;
+          var lineColors = pt.data.marker.line.color.slice();
+          origColor = lineColors[point];
+          idx = 0;
+          if (timer) clearInterval(timer);
+          timer = setInterval(function() {
+            idx = (idx + 1) % GD_RAINBOW.length;
+            var colors = lineColors.slice();
+            colors[point] = GD_RAINBOW[idx];
+            Plotly.restyle(gd, { 'marker.line.color': [colors] }, [trace]);
+          }, 150);
+        });
+
+        gd.on('plotly_unhover', function() {
+          if (timer) clearInterval(timer);
+          timer = null;
+          if (trace !== null && point !== null) {
+            var current = gd.data[trace].marker.line.color.slice();
+            current[point] = origColor;
+            Plotly.restyle(gd, { 'marker.line.color': [current] }, [trace]);
+          }
+          trace = null; point = null;
+        });
+      }
+      $(document).on('shiny:value', function(e) {
+        if (e.target && e.target.id === 'composition_plot') {
+          setTimeout(gdAttachDonutRainbow, 0);
+        }
+      });
+    ")),
     tags$style(HTML("
       html, body {
         height: 100%;
@@ -204,15 +295,24 @@ ui <- fluidPage(
   tags$title("Gaydar — LGBTQ Population Estimator"),
   div(
     class = "app-header",
-    tags$nav(
-      class = "app-links",
-      tags$a(href = "https://github.com/martensn/gaydar/tree/main", target = "_blank", "git repository"),
-      " · ",
-      tags$a(href = "data.html", target = "_blank", "data"),
-      " · ",
-      tags$a(href = "methods.html", target = "_blank", "methodology")
+    div(
+      class = "app-title-group",
+      tags$h2("Gaydar"),
+      tags$nav(
+        class = "app-links",
+        tags$a(href = "https://github.com/martensn/gaydar/tree/main", target = "_blank", "repo"),
+        " · ",
+        tags$a(href = "data.html", target = "_blank", "data"),
+        " · ",
+        tags$a(href = "methods.html", target = "_blank", "methodology")
+      )
     ),
-    tags$h2("Gaydar")
+    tags$a(
+      href = "https://martensn.github.io",
+      class = "home-arrow",
+      `aria-label` = "back to homepage",
+      "←"
+    )
   ),
   sidebarLayout(
     sidebarPanel(
@@ -267,7 +367,7 @@ ui <- fluidPage(
       checkboxGroupInput(
         "gender",
         "gender",
-        choices = c("Man" = "m", "Woman" = "w", "Non-binary" = "nb"),
+        choices = c("man" = "m", "woman" = "w", "non-binary" = "nb"),
         selected = c("m", "w", "nb")
       ),
       actionButton("go", "analyze")
@@ -777,7 +877,13 @@ server <- function(input, output, session) {
           textinfo  = "none",
           hoverinfo = "text",
           text = ~hover,
-          marker = list(colors = unname(colors[as.character(sub$identity)])),
+          marker = list(
+            colors = unname(colors[as.character(sub$identity)]),
+            # baseline border matches the panel background (invisible at
+            # rest); JS cycles a hovered slice's line color through the
+            # site's rainbow sequence, same as link/button hovers
+            line = list(color = rep("#32353f", nrow(sub)), width = 2)
+          ),
           domain = list(x = c(x_starts[i], x_ends[i]), y = c(0, 1)),
           showlegend = (i == 1)  # single legend
         )
@@ -896,10 +1002,13 @@ server <- function(input, output, session) {
     qs <- quantile(vals[!zero_pop], c(0.01, 0.99), na.rm = TRUE)
     vals_clamped <- pmin(pmax(vals, qs[1]), qs[2])
 
-    # Warm gradient matching the site palette (muted dark -> orange -> pink)
+    # Warm gradient matching the site palette (muted khaki -> orange -> pink)
     # instead of viridis's blue/green/yellow, which clashed with the theme.
+    # Low end is a warm khaki leaning toward the site's cream text color,
+    # without going so light the map reads as just shades of pink.
+    map_gradient <- c("#c5c0a5", "#cc8855", "#ff1493")
     pal <- colorNumeric(
-      palette = c("#3a3228", "#cc8855", "#ff1493"),
+      palette = map_gradient,
       domain = qs,
       na.color = "#00000000"
     )
@@ -907,33 +1016,50 @@ server <- function(input, output, session) {
     fill_colors <- ifelse(zero_pop, zero_pop_color, pal(vals_clamped))
 
     legend_title <- paste0(
-      label_map[input$metric],
-      " Percent<br>",
+      tolower(label_map[input$metric]), " percent<br>",
       "<span style='font-weight: normal;'>",
-      paste(gender_labels[input$gender], collapse = ", "),
+      tolower(paste(gender_labels[input$gender], collapse = ", ")),
       "</span>"
     )
-    
+
+    # ---- single-box legend: gradient bar + "no population" swatch in one
+    # control, rather than two separately-positioned addLegend() boxes ----
+    legend_ticks <- seq(qs[1], qs[2], length.out = 5)
+    tick_positions <- seq(0, 100, length.out = 5)
+    tick_html <- paste0(
+      mapply(function(v, pos) {
+        sprintf('<span class="gd-legend-tick" style="bottom:%.2f%%">%.1f%%</span>', pos, v * 100)
+      }, legend_ticks, tick_positions),
+      collapse = ""
+    )
+    legend_html <- sprintf(
+      '<div class="gd-legend-title">%s</div>
+       <div class="gd-legend-gradient" style="background: linear-gradient(to top, %s, %s, %s);">%s</div>
+       <div class="gd-legend-nopop"><span class="gd-legend-swatch"></span>no population</div>',
+      legend_title, map_gradient[1], map_gradient[2], map_gradient[3], tick_html
+    )
+
     leafletProxy("map") |>
       clearShapes() |>
       clearMarkers() |>
       clearControls() |>
       addPolygons(
         data = bgs,
+        # layerId + a stable class so the client-side rainbow-hover script
+        # (see tags$script above) can target these paths via CSS/DOM only
+        # -- highlightOptions is deliberately omitted; JS owns the hover
+        # styling here so it can animate through the rainbow sequence
+        # instead of a single static highlight color.
         fillColor = fill_colors,
         fillOpacity = 0.7,
         color = "rgba(255, 253, 218, 0.35)",
         weight = 0.4,
         label = ~label,
-        popup = ~popup,
-        highlightOptions = highlightOptions(
-          weight = 2,
-          color = "#fffdda",
-          bringToFront = TRUE
-        )
+        popup = ~popup
       ) |>
       addPolygons(
         data = radius_outline,
+        interactive = FALSE,
         color = "#fffdda",
         weight = 1,
         fill = FALSE,
@@ -945,22 +1071,9 @@ server <- function(input, output, session) {
         color = "#ff1493",
         fillOpacity = 1
       ) |>
-      addLegend(
-        position = "bottomright",
-        pal = pal,
-        values = vals_clamped,
-        title = legend_title,
-        labFormat = labelFormat(
-          transform = function(x) x * 100,
-          suffix = "%",
-          digits = 1
-        )
-      ) |>
-      addLegend(
-        position = "bottomright",
-        colors = zero_pop_color,
-        labels = "No population",
-        opacity = 0.7
+      addControl(
+        html = HTML(legend_html),
+        position = "bottomright"
       ) |>
       setView(
         lng  = address_point()$lon,

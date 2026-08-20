@@ -69,7 +69,7 @@ weights. I fix notation of gender and sex up front:</p>
   is <em>not</em> the same as the final output gender bucket used for
   population accounting on the map. Instead, the gender identity variable
   simply flags an individual's relationship to their sex assigned at birth.
-  For example, a transgender respondent's gender identity is not their sex
+  For example, transgender respondent's gender identity is not their sex
   assigned at birth, so &ldquo;trans&rdquo; respondents with
   $s=M$ are trans women and those with $s=F$ are trans men.</li>
 </ul>
@@ -173,9 +173,9 @@ n_{\text{eff},\ell,s,a} = \frac{(\sum w_i)^2}{\sum w_i^2},
 \]
 </div>
 <p>where $n_{g,\ell,s,a}$ denotes survey-weighted counts. Some cells are thin;
-in particular, non-binary and transgender respondents at a single exact age within
-a single sexuality category might often yield sparse cells. Thin cells add
-noise to the raw shares. I address this with two smoothing passes: first
+in particualr, non-binary and transgender respondents at a single exact age within
+a single sexuality category might often yield sparse cells. Thin cells lead add
+to the raw shares. I address this with two smoothing passes: first
 borrowing strength from <em>nearby ages</em> within a state (this section),
 then, in <a href="#sec-crossstate">Section 5</a>, borrowing strength across
 <em>states</em> for the coarser LGBT subcategory shares.</p>
@@ -299,8 +299,8 @@ from each overlapping PUMA, proportional to the area of intersection.</p>
 
 <h2 id="sec-puma">7. PUMA Reweighting</h2>
 
-<p>Spatial sorting shapes the spatial distribution of LGBTQ people across the United States.
-LGBTQ people cluster for many reasons, including proximity to community infrastructure,
+<p>Spatial sorting shapes the spatial distribution of LGBTQ people across United States.
+LGBTQ cluter for many reasons, including proximity to community infrastructure,
 local social tolerance, idiosyncratic amenity preferences, and more.
 Yet the projection in <a href="#sec-acs">Section 6</a> allocates LGBTQ population using
 only local age and sex composition &mdash; it offers no mechanism

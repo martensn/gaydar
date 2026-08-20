@@ -12,28 +12,53 @@
   <a class="back" href="./">&larr; Back to Gaydar</a>
 </header>
 
-<h1>Data Sources</h1>
+<h1>Gaydar: Estimating Local LGBTQ Populations</h1>
 <p class="subtitle">Nicholas Martens</p>
 
 <div class="lede">
-<p>Gaydar's estimates are built entirely from three public data sources,
-described below: the Household Pulse Survey, Gallup polling, and the
-American Community Survey. For how these sources are combined into
-tract-level population estimates, see the
-<a href="methods.html">Methodology</a> page &mdash; this page covers only
-where the underlying numbers come from.</p>
+<p>Have you ever wondered how many gay men live within a ten mile radius of any address in the United States?
+Gaydar answers this question (and any related inquiries about the spatial distribution of different members of the LGBTQ+ community).
+I focus on adult (18+) gay and lesbian, bisexual, queer, and transgender populations (sorry asexuals), split into three mutually exclusive and collectively exhaustive gender identities: men, women, and non-binary people.</p>
+
+<p>Note transgender people might also identify as gay, lesbian, bisexual, or queer, meaning the sub-population shares will not sum to the total because I don't double count LGBQ transgender people.
+Additionally, limitations within Household Pulse Survey microdata mean that I cannot measure non-binary transgender individuals.</p>
 </div>
 
-<h2 id="hps">Household Pulse Survey (HPS)</h2>
+<h2 id="summary">Summary</h2>
 
-<p>HPS was the first Census data product to ask respondents about sexual
-orientation and gender identity, basing the design of its questions on the
-results of a
-<a href="https://www.nationalacademies.org/publications/26424" target="_blank" rel="noopener">2022 NASEM report</a>.
-Designed to elicit responses to rapidly changing situations (for example,
-food security early in the coronavirus pandemic), the HPS surveyed
-different households each week. While topics varied between weeks, HPS
-consistently collected the following demographic data:</p>
+<p>The <a href="methods.html">Methods Appendix</a> offers a precise explanation of the process through which I derived the estimates, though I summarize the steps below:</p>
+
+<ol>
+<li>Estimate LGBTQ identification rates by state &times; sex assigned at birth &times; age bin using pooled Household Pulse Survey (HPS) microdata, with survey-weighted estimation and soft calibration to recent Gallup national benchmarks.</li>
+
+<li>Estimate gender identity composition conditional on sexual orientation, sex assigned at birth, and age, using HPS microdata to recover age-specific distributions of different gender identities. I assume cisgender, non-binary, and transgender are mutually exclusive and collectively exhaustive.
+Step 2 constructs a crosswalk from ACS age-sex counts to age-gender identity-sexuality estimates.
+These composition estimates are stabilized using <strong>age-local Dirichlet smoothing</strong>, allowing gender identity shares to vary smoothly across cohorts while remaining responsive to well-identified age groups (For example, younger AFAB lesbians roughly 15 percentage points more likely to identify as non-binary than AMAB gays in the same age cohort. Age-local Dirichlet smoothing preserves the pattern, just smoothing out some of the noise).</li>
+
+<li>Stabilize state-level shares of LGBTQ sub-populations (i.e. lesbians and gays, bisexuals, queers, transgender people) using empirical Bayes shrinkage across states to reduce noise in sparsely sampled cells (think transgender people in any state or bisexuals in Wyoming) while preserving meaningful geographic heterogeneity.</li>
+
+<li>Project expected LGBTQ population counts to Census tracts by combining estimated identification rates with ACS 5-year age&ndash;sex population counts (table B01001). Since age and sex vary locally, sexuality and gender identity will too.</li>
+
+<li>Reweight projected LGBTQ populations within states using the observed concentration of same-sex couples at the PUMA level as a proxy for within-state geographic clustering.
+Within a state, I assume that <strong>same-sex couples and all LGBTQ people live in the same areas</strong>.
+More precisely, same-sex couples and all LGBTQ must have the same probability of selecting a PUMA when choosing to live within a given state.
+Note that same-sex couples tend to be older, wealthier, better educated, and more likely to identify as gay or lesbian than the broader LGBTQ population, which suggests their spatial concentration patterns might systematically differ.
+Nonetheless, the reweighting ensures the estimates reflect more than the age and sex composition of a Census tract.
+<br><br>
+The reweighting produces a calibration factor for each PUMA, but applying that factor as a hard step function at PUMA boundaries introduces visual discontinuities in the map that are artifacts of the PUMA delineation rather than real demographic transitions. To address this, I smooth the calibration factors to the tract level using <strong>inverse-distance weighting</strong> (IDW): each tract receives a distance-weighted blend of all PUMA factors rather than the factor of whichever PUMA it happens to fall in. This preserves the geographic heterogeneity the calibration is meant to capture while producing a spatially continuous surface.</li>
+
+<li>Enforce a capacity constraint so that no tract's LGBTQ estimate exceeds its gender-group population. In high-concentration areas, the reweighting and rescaling can push estimates above 100 percent of the relevant gender-group total. I cap each gender group's estimates at its population and scale sub-populations (lesbian/gay, bisexual, queer, transgender) down proportionally, preserving within-group composition.</li>
+</ol>
+
+<h2 id="hps">Data Sources</h2>
+
+<h3>Household Pulse Survey (HPS)</h3>
+
+<p>HPS was the first the Census data product to ask respondents about sexual orientation and gender identity,
+basing the design of questions on the results of a <a href="https://www.nationalacademies.org/publications/26424" target="_blank" rel="noopener">2022 NASEM report</a>.
+Designed to elicit responses to rapidly changing situations (i.e. food security early in the coronavirus pandemic),
+the HPS surveyed different households each week.
+While topics varied between weeks, HPS consistently collected the following demograhic data:</p>
 
 <ul>
   <li>Sexual orientation</li>
@@ -44,17 +69,13 @@ consistently collected the following demographic data:</p>
   <li>Survey weights</li>
 </ul>
 
-<p>The microdata allow the relationship between sexual orientation and
-gender identity to vary flexibly by age and geography. For example, younger
-gay and lesbian individuals are more likely to identify as non-binary than
-older cohorts.</p>
+<p>The microdata allow the relationship between sexual orientation and gender identity to vary flexibly by age and geography. For example, younger gay and lesbian individuals are more likely to identify as non-binary than older cohorts.</p>
 
-<h2 id="gallup">Gallup Polling</h2>
+<h3 id="gallup">Gallup Polling</h3>
 
-<p>The
-<a href="https://news.gallup.com/poll/702206/lgbtq-identification-holds.aspx" target="_blank" rel="noopener">February 2026 Gallup report</a>
-provides the most recent nationally representative estimate of LGBTQ
-identification in the United States. The report includes:</p>
+<p>The <a href="https://news.gallup.com/poll/702206/lgbtq-identification-holds.aspx" target="_blank" rel="noopener">February 2026 Gallup report</a> provides the most recent nationally representative estimate of LGBTQ identification in the United States.</p>
+
+<p>The report includes:</p>
 
 <ul>
   <li>Overall national LGBTQ identification</li>
@@ -62,44 +83,21 @@ identification in the United States. The report includes:</p>
   <li>LGBTQ identification by generation &times; sex (for select cohorts)</li>
 </ul>
 
-<p>Given uncertainty in survey measurement, these estimates are used as
-<strong>soft calibration targets</strong>, not hard constraints. In
-practice, most state-level estimates fall within one to two percentage
-points of Gallup's top-line estimate of 9 percent.</p>
+<p>Given uncertainty in survey measurement, these estimates are used as <strong>soft calibration targets</strong>, not hard constraints.
+In practice, most state-level estimates fall within one to two percentage points of Gallup&rsquo;s top-line estimate of 9 percent.</p>
 
-<h2 id="acs">American Community Survey (ACS)</h2>
+<h3 id="acs">American Community Survey (ACS)</h3>
 
-<p>Population projections are anchored to <strong>ACS 5-year
-estimates</strong>, which provide stable small-area population counts at
-fine geographic resolution.</p>
+<p>Population projections are anchored to <strong>ACS 5-year estimates</strong>, which provide stable small-area population counts at fine geographic resolution.</p>
 
-<table class="data-table">
-  <thead>
-    <tr>
-      <th>Table</th>
-      <th>Purpose</th>
-      <th>Geography</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><a href="https://censusreporter.org/tables/B01001/" target="_blank" rel="noopener">B01001</a> &mdash; Sex by Age</td>
-      <td>Population counts by sex assigned at birth and granular age bin</td>
-      <td>Census tract</td>
-    </tr>
-    <tr>
-      <td><a href="https://censusreporter.org/tables/B09019/" target="_blank" rel="noopener">B09019</a> &mdash; Household Type by Relationship</td>
-      <td>Same-sex and opposite-sex couple counts, used for spatial reweighting</td>
-      <td>PUMA</td>
-    </tr>
-  </tbody>
-</table>
+<p>Specifically, the pipeline uses:</p>
 
-<p>Because the Household Pulse Survey and ACS use different age groupings,
-HPS respondents are mapped into ACS-compatible age bins prior to
-estimation. This ensures that estimated LGBTQ identification rates and
-gender-composition shares can be directly applied to ACS population counts
-without interpolation or extrapolation.</p>
+<ul>
+  <li><a href="https://censusreporter.org/tables/B01001/" target="_blank" rel="noopener">Table B01001 (Sex by Age)</a> to obtain population counts by <strong>sex assigned at birth</strong> and granular age bins, measured at the <strong>tract</strong> level.</li>
+  <li><a href="https://censusreporter.org/tables/B09019/" target="_blank" rel="noopener">Table B09019 (Household Type by Relationship)</a> informs later spatial reweighting within states, measured at the <strong>PUMA</strong> level</li>
+</ul>
+
+<p>Because the Household Pulse Survey (HPS) and ACS use different age groupings, HPS respondents are mapped into ACS-compatible age bins prior to estimation. This ensures that estimated LGBTQ identification rates and gender-composition shares can be directly applied to ACS population counts without interpolation or extrapolation.</p>
 
 <footer>
   <a href="./">&larr; Back to Gaydar</a> &middot; <a href="methods.html">Methodology</a> &middot; <a href="https://github.com/martensn/gaydar">Git repository</a>

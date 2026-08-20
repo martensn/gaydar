@@ -21,12 +21,17 @@ html, body {
 
 .container-fluid { background-color: var(--bg); padding-left: 0; padding-right: 0; }
 
-/* header: small link nav to the left of the big title */
+/* header: title + small link nav on the left, home arrow on the far right */
 .app-header {
   display: flex;
   align-items: baseline;
-  gap: 18px;
+  justify-content: space-between;
   padding: 20px 24px 8px;
+}
+.app-title-group {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
 }
 .app-links {
   font-size: 13px;
@@ -35,6 +40,15 @@ html, body {
 }
 .app-links a { color: var(--muted-70); text-decoration: none; }
 .app-links a:hover { color: var(--accent-pink); }
+
+.home-arrow {
+  align-self: center;
+  color: var(--text);
+  font-size: 22px;
+  text-decoration: none;
+  line-height: 1;
+}
+.home-arrow:hover { color: var(--accent-pink); }
 
 /* title -- lowercase condensed grotesque, brat-style */
 h2 {
@@ -129,7 +143,19 @@ input[type="checkbox"] {
   display: none;
 }
 
-/* action button */
+/* action button -- same rainbow cycle used for link hovers on the rest
+   of the site (martensn.github.io), applied to the background here since
+   the button is a solid fill rather than bare text */
+@keyframes scintillate-bg {
+  0%   { background-color: rgb(255, 107, 107); border-color: rgb(255, 107, 107); }
+  15%  { background-color: rgb(255, 217, 61);  border-color: rgb(255, 217, 61); }
+  30%  { background-color: rgb(107, 203, 119); border-color: rgb(107, 203, 119); }
+  45%  { background-color: rgb(77, 150, 255);  border-color: rgb(77, 150, 255); }
+  60%  { background-color: rgb(155, 89, 182);  border-color: rgb(155, 89, 182); }
+  75%  { background-color: rgb(255, 20, 147);  border-color: rgb(255, 20, 147); }
+  90%  { background-color: rgb(255, 140, 0);   border-color: rgb(255, 140, 0); }
+  100% { background-color: rgb(255, 107, 107); border-color: rgb(255, 107, 107); }
+}
 .btn-default {
   background-color: var(--accent-orange);
   border-color: var(--accent-orange);
@@ -139,8 +165,7 @@ input[type="checkbox"] {
 .btn-default:hover,
 .btn-default:focus,
 .btn-default:active {
-  background-color: var(--accent-pink) !important;
-  border-color: var(--accent-pink) !important;
+  animation: scintillate-bg 1.5s linear infinite;
   color: var(--bg) !important;
 }
 
@@ -177,20 +202,48 @@ input[type="checkbox"] {
   border: 1px solid var(--muted-15);
   border-radius: 6px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  padding: 10px 14px;
+  font-size: 12px;
 }
 
-/* Merge the "no population" swatch box directly beneath the main gradient
-   legend so they read as one continuous box instead of two stacked cards */
-.info.legend:has(+ .info.legend) {
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 0;
+/* single-box legend: gradient bar + "no population" swatch together */
+.gd-legend-title {
+  font-size: 13px;
+  margin-bottom: 10px;
+  color: var(--text);
 }
-.info.legend + .info.legend {
-  margin-top: -1px !important;
-  border-top: none;
-  border-top-left-radius: 0;
-  border-top-right-radius: 0;
-  box-shadow: none;
+.gd-legend-gradient {
+  position: relative;
+  width: 16px;
+  height: 100px;
+  margin: 6px 34px 6px 4px;
+  border-radius: 3px;
+}
+.gd-legend-tick {
+  position: absolute;
+  left: 22px;
+  transform: translateY(50%);
+  white-space: nowrap;
+  color: var(--muted-70);
+  font-size: 11px;
+}
+.gd-legend-nopop {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 12px;
+  padding-top: 9px;
+  border-top: 1px solid var(--muted-15);
+  font-size: 12px;
+  color: var(--text);
+}
+.gd-legend-swatch {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: #d9d9d9;
+  flex: none;
 }
 
 .leaflet-tooltip {
@@ -212,25 +265,25 @@ input[type="checkbox"] {
 .gd-table {
   border-collapse: collapse;
   font-size: 13px;
+  table-layout: fixed;
 }
 .gd-table td {
   padding: 1px 0;
-  white-space: nowrap;
   vertical-align: baseline;
 }
 .gd-table .gd-label {
   text-align: left;
   padding-right: 16px;
-  color: var(--muted-70);
+  color: var(--accent-orange);
+  white-space: nowrap;
+  width: 1px; /* shrink to content so only the value column wraps */
 }
 .gd-table .gd-value {
   text-align: left;
   color: var(--text);
-  font-weight: 700;
-}
-.gd-table .gd-pctile {
-  color: var(--accent-orange);
   font-weight: 400;
+  white-space: normal;
+  max-width: 220px;
 }
 
 /* donut panel: card docked to the bottom edge, rounded only on the side

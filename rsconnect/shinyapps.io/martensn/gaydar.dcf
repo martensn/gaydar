@@ -5,6 +5,6 @@ account: martensn
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
 appId: 17690347
-bundleId: 12438051
+bundleId: 12438144
 url: https://martensn.shinyapps.io/gaydar/
 version: 1
