@@ -20,12 +20,55 @@ options(tigris_use_cache = TRUE)
 
 source("code/helpers.R")
 
+# ---- national tract-level lookup table (loaded once per process) ----
+# Built offline by code/build_national_tract_rates.R from the same cached
+# per-state tract layers used elsewhere in the app; used for national
+# percentile comparisons and as the source of each tract's Congressional
+# District assignment.
+national_tract_rates <- readRDS(file.path(root_dir, "data/cache/national_tract_rates.rds"))
+
+# ---- geography levels available in the "Geography" selector ----
+# col = the column identifying that unit on a tract row; label = display name.
+geo_level_info <- list(
+  tract  = list(col = "GEOID",       label = "Census Tract"),
+  county = list(col = "county_fips", label = "County"),
+  puma   = list(col = "puma_id",     label = "PUMA"),
+  cd     = list(col = "cd_id",       label = "Congressional District")
+)
+
+# Dissolves a per-state tract sf layer up to county/PUMA/CD by summing the
+# numeric count columns within each group (geometry auto-dissolves via sf's
+# dplyr method). cbsa_id is kept via first() since it's categorical, needed
+# by metro_bg() at every geography level.
+dissolve_geo <- function(sf_obj, group_col) {
+  sf_obj |>
+    dplyr::group_by(.data[[group_col]]) |>
+    dplyr::summarise(
+      dplyr::across(dplyr::where(is.numeric), \(x) sum(x, na.rm = TRUE)),
+      cbsa_id = dplyr::first(cbsa_id),
+      .groups = "drop"
+    ) |>
+    dplyr::rename(GEOID = dplyr::all_of(group_col)) |>
+    dplyr::filter(!is.na(GEOID))
+}
+
+# Same idea, applied to the geometry-free national lookup table, for
+# building the national comparison distribution at the selected geography.
+aggregate_national <- function(group_col) {
+  if (group_col == "GEOID") return(national_tract_rates)
+  national_tract_rates |>
+    dplyr::filter(!is.na(.data[[group_col]])) |>
+    dplyr::group_by(.data[[group_col]]) |>
+    dplyr::summarise(dplyr::across(dplyr::where(is.numeric), \(x) sum(x, na.rm = TRUE)), .groups = "drop")
+}
+
 # ---------------------------
 # UI
 # ---------------------------
 
 ui <- fluidPage(
   tags$head(
+    tags$link(rel = "stylesheet", href = "app-theme.css"),
     tags$style(HTML("
       html, body {
         height: 100%;
@@ -88,6 +131,17 @@ ui <- fluidPage(
         step  = 1
       ),
       selectInput(
+        "geo_level",
+        "Geography:",
+        choices = c(
+          "Census Tract"           = "tract",
+          "County"                 = "county",
+          "PUMA"                   = "puma",
+          "Congressional District" = "cd"
+        ),
+        selected = "tract"
+      ),
+      selectInput(
         "metric",
         "Population:",
         choices = c(
@@ -111,7 +165,9 @@ ui <- fluidPage(
       helpText(
         tags$a(href = "https://github.com/martensn/gaydar/tree/main", target = "_blank", "Git repository"),
         " · ",
-        tags$a(href = "https://github.com/martensn/gaydar/blob/main/docs/methods.pdf", target = "_blank", "Methodology")
+        tags$a(href = "data.html", target = "_blank", "Data"),
+        " · ",
+        tags$a(href = "methods.html", target = "_blank", "Methodology")
       )
     ),
 
@@ -121,12 +177,12 @@ ui <- fluidPage(
 
         div(
           class = "map-panel",
-          shinycssloaders::withSpinner(leafletOutput("map", height = "100%"), color = "#1b9e77")
+          shinycssloaders::withSpinner(leafletOutput("map", height = "100%"), color = "#cc8855")
         ),
 
         div(
           class = "donut-panel",
-          shinycssloaders::withSpinner(plotlyOutput("composition_plot", height = "100%"), color = "#1b9e77")
+          shinycssloaders::withSpinner(plotlyOutput("composition_plot", height = "100%"), color = "#cc8855")
         )
       )
     )
@@ -304,7 +360,29 @@ server <- function(input, output, session) {
     session_cache(modifyList(cache, setNames(list(out), state)))
     out
   })
-  
+
+  # ---- dissolve tracts to the selected map geography (tract/county/PUMA/CD) ----
+  # Only the choropleth map itself respects this -- the radius/metro/state
+  # donut comparisons below stay on the raw tract layer (bg_sf()), since
+  # those depend on precise areal overlap (a 10-mile buffer, a CBSA) where
+  # aggregating first to a coarser geography would badly overstate partial
+  # overlaps (e.g. one huge rural PUMA barely clipped by the radius buffer
+  # would otherwise contribute its entire population).
+  geo_sf <- reactive({
+    req(bg_sf(), input$geo_level)
+    sf_obj <- bg_sf()
+    level  <- input$geo_level
+
+    if (level == "tract") return(sf_obj)
+
+    if (level == "cd") {
+      cd_lookup <- national_tract_rates |> dplyr::distinct(GEOID, cd_id)
+      sf_obj <- sf_obj |> dplyr::left_join(cd_lookup, by = "GEOID")
+    }
+
+    dissolve_geo(sf_obj, geo_level_info[[level]]$col)
+  })
+
   # ---- 10-mile radius ----
   radius_bg <- reactive({
     req(bg_sf(), point_sf(), input$radius_miles)
@@ -365,30 +443,81 @@ server <- function(input, output, session) {
   })
   
   bg_map_layer <- reactive({
-    req(bg_sf(), input$metric, input$gender)
+    req(geo_sf(), input$metric, input$gender, input$geo_level)
 
-    sf_obj <- bg_sf()
+    sf_obj <- geo_sf()
+    info   <- geo_level_info[[input$geo_level]]
 
     cols <- unlist(metric_gender_cols[[input$metric]][input$gender])
     req(length(cols) > 0)
 
-    sf_obj %>%
+    sf_obj <- sf_obj %>%
       mutate(
         numerator = rowSums(across(all_of(cols)), na.rm = TRUE),
         denominator = rowSums(
           across(all_of(paste0("total_", input$gender))),
           na.rm = TRUE
         ),
-        shr_selected = numerator / pmax(denominator, 1),
+        shr_selected = numerator / pmax(denominator, 1)
+      )
+
+    # ---- state percentile: rank within this state's own geo_sf() rows ----
+    has_pop <- sf_obj$denominator > 0
+    state_ecdf <- if (any(has_pop)) stats::ecdf(sf_obj$shr_selected[has_pop]) else function(x) NA_real_
+    sf_obj$state_pctile <- ifelse(has_pop, state_ecdf(sf_obj$shr_selected) * 100, NA_real_)
+
+    # ---- national percentile: rank within the same metric/gender/geography
+    # combo, computed nationally from national_tract_rates ----
+    national_df <- aggregate_national(info$col) %>%
+      mutate(
+        nat_numerator   = rowSums(across(all_of(cols)), na.rm = TRUE),
+        nat_denominator = rowSums(across(all_of(paste0("total_", input$gender))), na.rm = TRUE),
+        nat_shr         = nat_numerator / pmax(nat_denominator, 1)
+      ) %>%
+      filter(nat_denominator > 0)
+
+    national_ecdf <- if (nrow(national_df) > 0) stats::ecdf(national_df$nat_shr) else function(x) NA_real_
+    sf_obj$national_pctile <- ifelse(has_pop, national_ecdf(sf_obj$shr_selected) * 100, NA_real_)
+
+    ordinal_suffix <- function(n) {
+      dplyr::case_when(
+        n %% 100 %in% 11:13 ~ "th",
+        n %% 10 == 1        ~ "st",
+        n %% 10 == 2        ~ "nd",
+        n %% 10 == 3        ~ "rd",
+        TRUE                 ~ "th"
+      )
+    }
+    fmt_pctile <- function(p) {
+      r <- round(p)
+      ifelse(is.na(p), "n/a (no population)", paste0(r, ordinal_suffix(r), " percentile"))
+    }
+
+    sf_obj %>%
+      mutate(
         label = sprintf(
-        "<strong>Census Tract:</strong> %s<br/>
+        "<strong>%s:</strong> %s<br/>
          <strong>Estimate:</strong> %s<br/>
          <strong>Population:</strong> %s<br/>
          <strong>Share:</strong> %.1f%%",
-          GEOID,
+          info$label, GEOID,
           formatC(numerator, format = "f", digits = 0, big.mark = ","),
           formatC(denominator, format = "f", digits = 0, big.mark = ","),
           shr_selected * 100) |>
+          lapply(htmltools::HTML),
+        popup = sprintf(
+        "<strong>%s:</strong> %s<br/>
+         <strong>Estimate:</strong> %s<br/>
+         <strong>Population:</strong> %s<br/>
+         <strong>Share:</strong> %.1f%%<br/>
+         <strong>State:</strong> %s<br/>
+         <strong>National:</strong> %s",
+          info$label, GEOID,
+          formatC(numerator, format = "f", digits = 0, big.mark = ","),
+          formatC(denominator, format = "f", digits = 0, big.mark = ","),
+          shr_selected * 100,
+          fmt_pctile(state_pctile),
+          fmt_pctile(national_pctile)) |>
           lapply(htmltools::HTML)
       )
   })
@@ -522,10 +651,10 @@ server <- function(input, output, session) {
         font = list(
           family = "Helvetica",
           size   = 14,
-          color  = "#333333"
+          color  = "#fffdda"
         )
       )
-      
+
       # ---- GEOGRAPHY LABEL (above donut) ----
       ann[[length(ann) + 1]] <- list(
         x = x_mids[i],
@@ -543,28 +672,30 @@ server <- function(input, output, session) {
         font = list(
           family = "Helvetica",
           size   = 18,
-          color  = "#444444"
+          color  = "#cc8855"
         )
       )
     }
-    
+
     fig |>
       plotly::layout(
         annotations = ann,
         margin = list(t = 70, b = 10, l = 10, r = 10),
-        legend = list(orientation = "v"),
-        
+        legend = list(orientation = "v", font = list(color = "#fffdda")),
+        paper_bgcolor = "#282b33",
+        plot_bgcolor  = "#282b33",
+
         font = list(
           family = "Helvetica",
           size   = 13,
-          color  = "#333333"
+          color  = "#fffdda"
         )
       )
   })
 
   output$map <- renderLeaflet({
     leaflet() |>
-      addProviderTiles("CartoDB.Positron")
+      addProviderTiles("CartoDB.DarkMatter")
   })
     
   # ---- map (simple highlight) ----
@@ -590,16 +721,25 @@ server <- function(input, output, session) {
       bgs <- sf::st_cast(bgs, "MULTIPOLYGON", warn = FALSE)
     } 
     # ---- winsorized color scale ----
+    # Tracts with zero selected-gender population have numerator = denominator
+    # = 0, so shr_selected = 0 -- indistinguishable from a real, very-low
+    # share at the dark end of the viridis scale. Excluded from the domain
+    # calc and rendered as a flat neutral gray instead.
     vals <- bgs$shr_selected
-    qs <- quantile(vals, c(0.01, 0.99), na.rm = TRUE)
+    zero_pop <- !is.na(bgs$denominator) & bgs$denominator <= 0
+    zero_pop_color <- "#d9d9d9"
+
+    qs <- quantile(vals[!zero_pop], c(0.01, 0.99), na.rm = TRUE)
     vals_clamped <- pmin(pmax(vals, qs[1]), qs[2])
-    
+
     pal <- colorNumeric(
       "viridis",
       domain = qs,
       na.color = "#00000000"
     )
-    
+
+    fill_colors <- ifelse(zero_pop, zero_pop_color, pal(vals_clamped))
+
     legend_title <- paste0(
       label_map[input$metric],
       " Percent<br>",
@@ -614,14 +754,15 @@ server <- function(input, output, session) {
       clearControls() |>
       addPolygons(
         data = bgs,
-        fillColor = pal(vals_clamped),
+        fillColor = fill_colors,
         fillOpacity = 0.7,
-        color = "#444444",
-        weight = 0.2,
+        color = "rgba(255, 253, 218, 0.35)",
+        weight = 0.4,
         label = ~label,
+        popup = ~popup,
         highlightOptions = highlightOptions(
           weight = 2,
-          color = "#000000",
+          color = "#fffdda",
           bringToFront = TRUE
         )
       ) |>
@@ -629,7 +770,7 @@ server <- function(input, output, session) {
         lng = st_coordinates(pt)[1,1],
         lat = st_coordinates(pt)[1,2],
         radius = input$radius_miles * 1609.34,
-        color = "black",
+        color = "#fffdda",
         weight = 1,
         fill = FALSE,
         opacity = 0.6
@@ -637,7 +778,7 @@ server <- function(input, output, session) {
       addCircleMarkers(
         data = pt,
         radius = 6,
-        color = "black",
+        color = "#ff1493",
         fillOpacity = 1
       ) |>
       addLegend(
@@ -650,6 +791,12 @@ server <- function(input, output, session) {
           suffix = "%",
           digits = 1
         )
+      ) |>
+      addLegend(
+        position = "bottomright",
+        colors = zero_pop_color,
+        labels = "No population",
+        opacity = 0.7
       ) |>
       setView(
         lng  = address_point()$lon,

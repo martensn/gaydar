@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data Sources — Gaydar</title>
+<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+
+<header>
+  <a class="back" href="./">&larr; Back to Gaydar</a>
+</header>
+
+<h1>Data Sources</h1>
+<p class="subtitle">Nicholas Martens</p>
+
+<div class="lede">
+<p>Gaydar's estimates are built entirely from three public data sources,
+described below: the Household Pulse Survey, Gallup polling, and the
+American Community Survey. For how these sources are combined into
+tract-level population estimates, see the
+<a href="methods.html">Methodology</a> page &mdash; this page covers only
+where the underlying numbers come from.</p>
+</div>
+
+<h2 id="hps">Household Pulse Survey (HPS)</h2>
+
+<p>HPS was the first Census data product to ask respondents about sexual
+orientation and gender identity, basing the design of its questions on the
+results of a
+<a href="https://www.nationalacademies.org/publications/26424" target="_blank" rel="noopener">2022 NASEM report</a>.
+Designed to elicit responses to rapidly changing situations (for example,
+food security early in the coronavirus pandemic), the HPS surveyed
+different households each week. While topics varied between weeks, HPS
+consistently collected the following demographic data:</p>
+
+<ul>
+  <li>Sexual orientation</li>
+  <li>Gender identity</li>
+  <li>Sex assigned at birth</li>
+  <li>Year of birth</li>
+  <li>State of residence</li>
+  <li>Survey weights</li>
+</ul>
+
+<p>The microdata allow the relationship between sexual orientation and
+gender identity to vary flexibly by age and geography. For example, younger
+gay and lesbian individuals are more likely to identify as non-binary than
+older cohorts.</p>
+
+<h2 id="gallup">Gallup Polling</h2>
+
+<p>The
+<a href="https://news.gallup.com/poll/702206/lgbtq-identification-holds.aspx" target="_blank" rel="noopener">February 2026 Gallup report</a>
+provides the most recent nationally representative estimate of LGBTQ
+identification in the United States. The report includes:</p>
+
+<ul>
+  <li>Overall national LGBTQ identification</li>
+  <li>LGBTQ identification by generation</li>
+  <li>LGBTQ identification by generation &times; sex (for select cohorts)</li>
+</ul>
+
+<p>Given uncertainty in survey measurement, these estimates are used as
+<strong>soft calibration targets</strong>, not hard constraints. In
+practice, most state-level estimates fall within one to two percentage
+points of Gallup's top-line estimate of 9 percent.</p>
+
+<h2 id="acs">American Community Survey (ACS)</h2>
+
+<p>Population projections are anchored to <strong>ACS 5-year
+estimates</strong>, which provide stable small-area population counts at
+fine geographic resolution.</p>
+
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Table</th>
+      <th>Purpose</th>
+      <th>Geography</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><a href="https://censusreporter.org/tables/B01001/" target="_blank" rel="noopener">B01001</a> &mdash; Sex by Age</td>
+      <td>Population counts by sex assigned at birth and granular age bin</td>
+      <td>Census tract</td>
+    </tr>
+    <tr>
+      <td><a href="https://censusreporter.org/tables/B09019/" target="_blank" rel="noopener">B09019</a> &mdash; Household Type by Relationship</td>
+      <td>Same-sex and opposite-sex couple counts, used for spatial reweighting</td>
+      <td>PUMA</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Because the Household Pulse Survey and ACS use different age groupings,
+HPS respondents are mapped into ACS-compatible age bins prior to
+estimation. This ensures that estimated LGBTQ identification rates and
+gender-composition shares can be directly applied to ACS population counts
+without interpolation or extrapolation.</p>
+
+<footer>
+  <a href="./">&larr; Back to Gaydar</a> &middot; <a href="methods.html">Methodology</a> &middot; <a href="https://github.com/martensn/gaydar">Git repository</a>
+</footer>
+
+</body>
+</html>

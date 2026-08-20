@@ -1,0 +1,170 @@
+/* Gaydar dashboard theme -- matches the palette used on martensn.github.io */
+
+:root {
+  --bg: #282b33;
+  --panel-bg: #32353f;
+  --text: #fffdda;
+  --muted-70: rgba(255, 253, 218, 0.7);
+  --muted-50: rgba(255, 253, 218, 0.5);
+  --muted-35: rgba(255, 253, 218, 0.35);
+  --muted-15: rgba(255, 253, 218, 0.15);
+  --accent-orange: #cc8855;
+  --accent-pink: #ff1493;
+}
+
+html, body {
+  background-color: var(--bg) !important;
+  color: var(--text) !important;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif !important;
+  font-weight: 300;
+}
+
+.container-fluid { background-color: var(--bg); }
+
+/* title */
+h2 {
+  color: var(--text);
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  padding: 6px 0 0;
+  margin: 0 0 8px;
+}
+
+/* sidebar */
+.well {
+  background-color: var(--panel-bg);
+  border: 1px solid var(--muted-15);
+  box-shadow: none;
+  color: var(--text);
+}
+.control-label { color: var(--muted-70); font-weight: 400; }
+
+/* text inputs + select */
+.form-control,
+.selectize-input {
+  background-color: var(--bg) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--muted-15) !important;
+  box-shadow: none !important;
+}
+.form-control:focus,
+.selectize-input.focus {
+  border-color: var(--accent-orange) !important;
+  box-shadow: none !important;
+}
+.selectize-input.dropdown-active { border-radius: 4px; }
+.selectize-dropdown,
+.selectize-dropdown-content {
+  background-color: var(--panel-bg);
+  color: var(--text);
+  border-color: var(--muted-15);
+}
+.selectize-dropdown .option {
+  color: var(--text);
+}
+.selectize-dropdown .option.active,
+.selectize-dropdown .option:hover {
+  background-color: var(--accent-orange);
+  color: var(--bg);
+}
+
+/* checkboxes */
+.checkbox label,
+.radio label {
+  color: var(--text);
+}
+
+/* ion.rangeSlider (radius) */
+.irs-line, .irs--shiny .irs-line { background: var(--muted-15); }
+.irs-bar, .irs--shiny .irs-bar { background: var(--accent-orange); border-top: none; border-bottom: none; }
+.irs-handle, .irs--shiny .irs-handle {
+  background-color: var(--text);
+  border: 2px solid var(--accent-orange);
+  box-shadow: none;
+  top: 22px;
+}
+.irs-from, .irs-to, .irs-single,
+.irs--shiny .irs-from, .irs--shiny .irs-to, .irs--shiny .irs-single {
+  background-color: var(--accent-orange);
+  color: var(--bg);
+  text-shadow: none;
+  font-weight: 700;
+}
+.irs-from:before, .irs-to:before, .irs-single:before,
+.irs--shiny .irs-from:before, .irs--shiny .irs-to:before, .irs--shiny .irs-single:before {
+  border-top-color: var(--accent-orange);
+}
+.irs-min, .irs-max, .irs--shiny .irs-min, .irs--shiny .irs-max {
+  color: var(--muted-50);
+  background: transparent;
+}
+.irs-grid-text { color: var(--muted-35); }
+.irs-grid-pol { background: var(--muted-15); }
+
+/* action button */
+.btn-default {
+  background-color: var(--accent-orange);
+  border-color: var(--accent-orange);
+  color: var(--bg);
+  font-weight: 700;
+}
+.btn-default:hover,
+.btn-default:focus,
+.btn-default:active {
+  background-color: var(--accent-pink) !important;
+  border-color: var(--accent-pink) !important;
+  color: var(--bg) !important;
+}
+
+/* helpText + links */
+.help-block { color: var(--muted-50); }
+.help-block a { color: var(--accent-pink); text-decoration: none; }
+.help-block a:hover { text-decoration: underline; }
+
+/* spinner container background so it doesn't flash white while loading */
+.shiny-spinner-output-container { background-color: var(--bg); }
+
+/* ---- leaflet chrome ---- */
+.leaflet-container { background: var(--bg); }
+
+.leaflet-bar {
+  border: 1px solid var(--muted-15) !important;
+}
+.leaflet-bar a {
+  background-color: var(--panel-bg) !important;
+  color: var(--text) !important;
+  border-bottom: 1px solid var(--muted-15) !important;
+}
+.leaflet-bar a:hover { background-color: var(--bg) !important; }
+
+.leaflet-control-attribution {
+  background: rgba(40, 43, 51, 0.85) !important;
+  color: var(--muted-50) !important;
+}
+.leaflet-control-attribution a { color: var(--muted-70) !important; }
+
+.info.legend {
+  background: var(--panel-bg) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--muted-15);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.leaflet-tooltip {
+  background: var(--panel-bg) !important;
+  color: var(--text) !important;
+  border: 1px solid var(--muted-15) !important;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+.leaflet-tooltip-top:before { border-top-color: var(--panel-bg) !important; }
+
+.leaflet-popup-content-wrapper {
+  background: var(--panel-bg);
+  color: var(--text);
+}
+.leaflet-popup-tip { background: var(--panel-bg); }
+.leaflet-popup-content strong { color: var(--accent-orange); }
+
+@media (max-width: 767px) {
+  .well { margin-bottom: 16px; }
+}
