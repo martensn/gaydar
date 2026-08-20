@@ -21,11 +21,14 @@ html, body {
 
 .container-fluid { background-color: var(--bg); }
 
-/* title */
+/* title -- lowercase condensed grotesque, brat-style */
 h2 {
-  color: var(--text);
-  font-weight: 700;
-  letter-spacing: 0.3px;
+  font-family: "Arial Narrow", "Helvetica Neue Condensed", "Haettenschweiler", Impact, sans-serif;
+  text-transform: lowercase;
+  color: var(--accent-pink);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  font-size: 40px;
   padding: 6px 0 0;
   margin: 0 0 8px;
 }
@@ -73,6 +76,9 @@ h2 {
 .radio label {
   color: var(--text);
 }
+input[type="checkbox"] {
+  accent-color: var(--accent-pink);
+}
 
 /* ion.rangeSlider (radius) */
 .irs-line, .irs--shiny .irs-line { background: var(--muted-15); }
@@ -94,12 +100,12 @@ h2 {
 .irs--shiny .irs-from:before, .irs--shiny .irs-to:before, .irs--shiny .irs-single:before {
   border-top-color: var(--accent-orange);
 }
-.irs-min, .irs-max, .irs--shiny .irs-min, .irs--shiny .irs-max {
-  color: var(--muted-50);
-  background: transparent;
+/* min/max end labels and the tick grid below the track are redundant with
+   the floating current-value bubble above the handle -- hide both */
+.irs-min, .irs-max, .irs--shiny .irs-min, .irs--shiny .irs-max,
+.irs-grid, .irs--shiny .irs-grid {
+  display: none;
 }
-.irs-grid-text { color: var(--muted-35); }
-.irs-grid-pol { background: var(--muted-15); }
 
 /* action button */
 .btn-default {
@@ -147,7 +153,22 @@ h2 {
   background: var(--panel-bg) !important;
   color: var(--text) !important;
   border: 1px solid var(--muted-15);
+  border-radius: 6px;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+/* Merge the "no population" swatch box directly beneath the main gradient
+   legend so they read as one continuous box instead of two stacked cards */
+.info.legend:has(+ .info.legend) {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.info.legend + .info.legend {
+  margin-top: -1px !important;
+  border-top: none;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  box-shadow: none;
 }
 
 .leaflet-tooltip {
@@ -163,7 +184,32 @@ h2 {
   color: var(--text);
 }
 .leaflet-popup-tip { background: var(--panel-bg); }
-.leaflet-popup-content strong { color: var(--accent-orange); }
+
+/* tract/county/PUMA/CD tooltip + popup content -- two-column table so
+   labels stay left-aligned and values line up in a consistent column */
+.gd-table {
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.gd-table td {
+  padding: 1px 0;
+  white-space: nowrap;
+  vertical-align: baseline;
+}
+.gd-table .gd-label {
+  text-align: left;
+  padding-right: 16px;
+  color: var(--muted-70);
+}
+.gd-table .gd-value {
+  text-align: left;
+  color: var(--text);
+  font-weight: 700;
+}
+.gd-table .gd-pctile {
+  color: var(--accent-orange);
+  font-weight: 400;
+}
 
 @media (max-width: 767px) {
   .well { margin-bottom: 16px; }

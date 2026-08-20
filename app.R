@@ -27,13 +27,19 @@ source("code/helpers.R")
 # District assignment.
 national_tract_rates <- readRDS(file.path(root_dir, "data/cache/national_tract_rates.rds"))
 
+# ---- human-readable names for county/PUMA/CD GEOIDs (built offline by
+# code/build_geo_names.R) so the map can show e.g. "Alger County, MI"
+# instead of a raw FIPS code. Tracts have no such lookup (names = NULL). ----
+geo_names <- readRDS(file.path(root_dir, "data/cache/geo_names.rds"))
+
 # ---- geography levels available in the "Geography" selector ----
-# col = the column identifying that unit on a tract row; label = display name.
+# col = the column identifying that unit on a tract row; label = display
+# name (used in the tooltip/popup); names = key into geo_names, or NULL.
 geo_level_info <- list(
-  tract  = list(col = "GEOID",       label = "Census Tract"),
-  county = list(col = "county_fips", label = "County"),
-  puma   = list(col = "puma_id",     label = "PUMA"),
-  cd     = list(col = "cd_id",       label = "Congressional District")
+  tract  = list(col = "GEOID",       label = "census tract",           names = NULL),
+  county = list(col = "county_fips", label = "county",                 names = "county"),
+  puma   = list(col = "puma_id",     label = "puma",                   names = "puma"),
+  cd     = list(col = "cd_id",       label = "congressional district", names = "cd")
 )
 
 # Dissolves a per-state tract sf layer up to county/PUMA/CD by summing the
@@ -118,21 +124,22 @@ ui <- fluidPage(
   titlePanel(title = "Gaydar", windowTitle = "Gaydar — LGBTQ Population Estimator"),
   sidebarLayout(
     sidebarPanel(
-      textInput("street", "Street Address", placeholder = "123 Main St"),
-      textInput("city",   "City",           placeholder = "Chicago"),
-      textInput("state",  "State", placeholder = "IL"),
-      textInput("zip",    "ZIP code",        placeholder = "60637"),
+      textInput("street", "address", placeholder = "123 Main St"),
+      textInput("city",   "city",    placeholder = "Chicago"),
+      textInput("state",  "state",   placeholder = "IL"),
+      textInput("zip",    "zip",     placeholder = "60637"),
       sliderInput(
         "radius_miles",
         "Radius (miles)",
         min   = 0,
         max   = 50,
         value = 10,
-        step  = 1
+        step  = 1,
+        ticks = FALSE
       ),
       selectInput(
         "geo_level",
-        "Geography:",
+        "geography",
         choices = c(
           "Census Tract"           = "tract",
           "County"                 = "county",
@@ -143,7 +150,7 @@ ui <- fluidPage(
       ),
       selectInput(
         "metric",
-        "Population:",
+        "population",
         choices = c(
           "LGBT"            = "lgbt",
           "Lesbian and Gay" = "lg",
@@ -156,7 +163,7 @@ ui <- fluidPage(
 
       checkboxGroupInput(
         "gender",
-        "Gender",
+        "gender",
         choices = c("Man" = "m", "Woman" = "w", "Non-binary" = "nb"),
         selected = c("m", "w", "nb")
       ),
@@ -195,11 +202,11 @@ ui <- fluidPage(
 
 server <- function(input, output, session) {
   colors <- c(
-    non_lgbt = "grey75",
-    lg       = "#1b9e77",
-    bi       = "#7570b3",
-    queer    = "#e7298a",
-    trans    = "royalblue"
+    non_lgbt = "#57534a",
+    lg       = "#cc8855",
+    bi       = "#e3b23c",
+    queer    = "#ff1493",
+    trans    = "#b5567c"
   )
   label_map <- c(
     lgbt     = "LGBTQ",
@@ -479,6 +486,15 @@ server <- function(input, output, session) {
     national_ecdf <- if (nrow(national_df) > 0) stats::ecdf(national_df$nat_shr) else function(x) NA_real_
     sf_obj$national_pctile <- ifelse(has_pop, national_ecdf(sf_obj$shr_selected) * 100, NA_real_)
 
+    # ---- human-readable name (county/PUMA/CD) instead of a raw FIPS-style
+    # id; tracts have no such lookup and keep showing their GEOID ----
+    if (!is.null(info$names)) {
+      sf_obj <- sf_obj |> dplyr::left_join(geo_names[[info$names]], by = "GEOID")
+      sf_obj$display_id <- dplyr::coalesce(sf_obj$name, sf_obj$GEOID)
+    } else {
+      sf_obj$display_id <- sf_obj$GEOID
+    }
+
     ordinal_suffix <- function(n) {
       dplyr::case_when(
         n %% 100 %in% 11:13 ~ "th",
@@ -488,37 +504,41 @@ server <- function(input, output, session) {
         TRUE                 ~ "th"
       )
     }
+    # Value-cell HTML for a percentile row -- the word "percentile" is its
+    # own span so it can be styled as an accent color separately from the number.
     fmt_pctile <- function(p) {
       r <- round(p)
-      ifelse(is.na(p), "n/a (no population)", paste0(r, ordinal_suffix(r), " percentile"))
+      ifelse(
+        is.na(p),
+        "n/a (no population)",
+        paste0(r, ordinal_suffix(r), " <span class=\"gd-pctile\">percentile</span>")
+      )
+    }
+
+    tooltip_row <- function(label, value) {
+      sprintf("<tr><td class=\"gd-label\">%s</td><td class=\"gd-value\">%s</td></tr>", label, value)
     }
 
     sf_obj %>%
       mutate(
-        label = sprintf(
-        "<strong>%s:</strong> %s<br/>
-         <strong>Estimate:</strong> %s<br/>
-         <strong>Population:</strong> %s<br/>
-         <strong>Share:</strong> %.1f%%",
-          info$label, GEOID,
-          formatC(numerator, format = "f", digits = 0, big.mark = ","),
-          formatC(denominator, format = "f", digits = 0, big.mark = ","),
-          shr_selected * 100) |>
-          lapply(htmltools::HTML),
-        popup = sprintf(
-        "<strong>%s:</strong> %s<br/>
-         <strong>Estimate:</strong> %s<br/>
-         <strong>Population:</strong> %s<br/>
-         <strong>Share:</strong> %.1f%%<br/>
-         <strong>State:</strong> %s<br/>
-         <strong>National:</strong> %s",
-          info$label, GEOID,
-          formatC(numerator, format = "f", digits = 0, big.mark = ","),
-          formatC(denominator, format = "f", digits = 0, big.mark = ","),
-          shr_selected * 100,
-          fmt_pctile(state_pctile),
-          fmt_pctile(national_pctile)) |>
-          lapply(htmltools::HTML)
+        label = paste0(
+          "<table class=\"gd-table\">",
+          tooltip_row(info$label, display_id),
+          tooltip_row("lgbtq+", formatC(numerator, format = "f", digits = 0, big.mark = ",")),
+          tooltip_row("total", formatC(denominator, format = "f", digits = 0, big.mark = ",")),
+          tooltip_row("percent", sprintf("%.1f%%", shr_selected * 100)),
+          "</table>"
+        ) |> lapply(htmltools::HTML),
+        popup = paste0(
+          "<table class=\"gd-table\">",
+          tooltip_row(info$label, display_id),
+          tooltip_row("lgbtq+", formatC(numerator, format = "f", digits = 0, big.mark = ",")),
+          tooltip_row("total", formatC(denominator, format = "f", digits = 0, big.mark = ",")),
+          tooltip_row("percent", sprintf("%.1f%%", shr_selected * 100)),
+          tooltip_row("state", fmt_pctile(state_pctile)),
+          tooltip_row("national", fmt_pctile(national_pctile)),
+          "</table>"
+        ) |> lapply(htmltools::HTML)
       )
   })
   
@@ -533,25 +553,25 @@ server <- function(input, output, session) {
     }
     
     # Build the three areas (radius label matches your area_summary())
-    rad_name <- paste0(round(input$radius_miles, 1), " Mile Radius")
-    
+    rad_name <- paste0(round(input$radius_miles, 1), " mile radius")
+
     s_rad   <- safe_summarize(rad_name, summarize_area(radius_bg()))
-    s_metro <- safe_summarize("Metro",  summarize_area(metro_bg()))
-    s_state <- safe_summarize("State",  summarize_area(bg_sf()))
-    
+    s_metro <- safe_summarize("metro",  summarize_area(metro_bg()))
+    s_state <- safe_summarize("state",  summarize_area(bg_sf()))
+
     sums <- dplyr::bind_rows(s_rad, s_metro, s_state)
-    
+
     validate(need(nrow(sums) > 0, "Waiting for area summaries…"))
-    
+
     df <- dplyr::bind_rows(lapply(seq_len(nrow(sums)), function(i) {
       row <- sums[i, ]
       area_name <- row$area
       # Pull the correct SF object for this area
-      if (area_name == paste0(round(input$radius_miles, 1), " Mile Radius")) {
+      if (area_name == rad_name) {
         sf_obj <- radius_bg()
-      } else if (area_name == "Metro") {
+      } else if (area_name == "metro") {
         sf_obj <- metro_bg()
-      } else if (area_name == "State") {
+      } else if (area_name == "state") {
         sf_obj <- bg_sf()
       } else {
         stop("Unknown area: ", area_name)
@@ -585,7 +605,7 @@ server <- function(input, output, session) {
     
     
     # Order areas the way you want (only those that exist)
-    area_order <- c(rad_name, "Metro", "State")
+    area_order <- c(rad_name, "metro", "state")
     areas <- area_order[area_order %in% unique(df$area)]
     validate(need(length(areas) >= 1, "Waiting for valid areas…"))
     
@@ -732,8 +752,10 @@ server <- function(input, output, session) {
     qs <- quantile(vals[!zero_pop], c(0.01, 0.99), na.rm = TRUE)
     vals_clamped <- pmin(pmax(vals, qs[1]), qs[2])
 
+    # Warm gradient matching the site palette (muted dark -> orange -> pink)
+    # instead of viridis's blue/green/yellow, which clashed with the theme.
     pal <- colorNumeric(
-      "viridis",
+      palette = c("#3a3228", "#cc8855", "#ff1493"),
       domain = qs,
       na.color = "#00000000"
     )
