@@ -121,7 +121,19 @@ ui <- fluidPage(
       }
     "))
   ),
-  titlePanel(title = "Gaydar", windowTitle = "Gaydar — LGBTQ Population Estimator"),
+  tags$title("Gaydar — LGBTQ Population Estimator"),
+  div(
+    class = "app-header",
+    tags$nav(
+      class = "app-links",
+      tags$a(href = "https://github.com/martensn/gaydar/tree/main", target = "_blank", "git repository"),
+      " · ",
+      tags$a(href = "data.html", target = "_blank", "data"),
+      " · ",
+      tags$a(href = "methods.html", target = "_blank", "methodology")
+    ),
+    tags$h2("Gaydar")
+  ),
   sidebarLayout(
     sidebarPanel(
       textInput("street", "address", placeholder = "123 Main St"),
@@ -141,10 +153,10 @@ ui <- fluidPage(
         "geo_level",
         "geography",
         choices = c(
-          "Census Tract"           = "tract",
-          "County"                 = "county",
-          "PUMA"                   = "puma",
-          "Congressional District" = "cd"
+          "census tract"           = "tract",
+          "county"                 = "county",
+          "puma"                   = "puma",
+          "congressional district" = "cd"
         ),
         selected = "tract"
       ),
@@ -152,11 +164,11 @@ ui <- fluidPage(
         "metric",
         "population",
         choices = c(
-          "LGBT"            = "lgbt",
-          "Lesbian and Gay" = "lg",
-          "Bisexual"        = "bi",
-          "Queer"           = "queer",
-          "Transgender"     = "trans"
+          "lgbt"            = "lgbt",
+          "lesbian and gay" = "lg",
+          "bisexual"        = "bi",
+          "queer"           = "queer",
+          "transgender"     = "trans"
         ),
         selected = "lgbt"
       ),
@@ -167,15 +179,7 @@ ui <- fluidPage(
         choices = c("Man" = "m", "Woman" = "w", "Non-binary" = "nb"),
         selected = c("m", "w", "nb")
       ),
-      actionButton("go", "Analyze location"),
-      helpText("Estimates are precomputed for all 50 states and DC, so results usually appear within a few seconds."),
-      helpText(
-        tags$a(href = "https://github.com/martensn/gaydar/tree/main", target = "_blank", "Git repository"),
-        " · ",
-        tags$a(href = "data.html", target = "_blank", "Data"),
-        " · ",
-        tags$a(href = "methods.html", target = "_blank", "Methodology")
-      )
+      actionButton("go", "analyze")
     ),
 
     mainPanel(
@@ -189,6 +193,20 @@ ui <- fluidPage(
 
         div(
           class = "donut-panel",
+          tags$button(
+            class = "donut-toggle",
+            `aria-label` = "toggle charts",
+            onclick = "
+              var p = this.closest('.donut-panel');
+              p.classList.toggle('collapsed');
+              this.textContent = p.classList.contains('collapsed') ? '▲' : '▼';
+              setTimeout(function() {
+                var widget = HTMLWidgets.find('#map');
+                if (widget && widget.getMap) widget.getMap().invalidateSize();
+              }, 220);
+            ",
+            "▼"
+          ),
           shinycssloaders::withSpinner(plotlyOutput("composition_plot", height = "100%"), color = "#cc8855")
         )
       )

@@ -19,7 +19,22 @@ html, body {
   font-weight: 300;
 }
 
-.container-fluid { background-color: var(--bg); }
+.container-fluid { background-color: var(--bg); padding-left: 0; padding-right: 0; }
+
+/* header: small link nav to the left of the big title */
+.app-header {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  padding: 20px 24px 8px;
+}
+.app-links {
+  font-size: 13px;
+  color: var(--muted-50);
+  white-space: nowrap;
+}
+.app-links a { color: var(--muted-70); text-decoration: none; }
+.app-links a:hover { color: var(--accent-pink); }
 
 /* title -- lowercase condensed grotesque, brat-style */
 h2 {
@@ -29,16 +44,23 @@ h2 {
   font-weight: 400;
   letter-spacing: -0.01em;
   font-size: 40px;
-  padding: 6px 0 0;
-  margin: 0 0 8px;
+  line-height: 1;
+  margin: 0;
 }
 
-/* sidebar */
+/* docked sidebar: flush against the left edge, rounded only on the side
+   facing the map -- no gutter/margin separating it from the map */
+.row { margin-left: 0; margin-right: 0; }
+.col-sm-4, .col-sm-8 { padding-left: 0; padding-right: 0; }
+
 .well {
   background-color: var(--panel-bg);
   border: 1px solid var(--muted-15);
+  border-left: none;
+  border-radius: 0 12px 12px 0;
   box-shadow: none;
   color: var(--text);
+  margin: 0;
 }
 .control-label { color: var(--muted-70); font-weight: 400; }
 
@@ -211,6 +233,41 @@ input[type="checkbox"] {
   font-weight: 400;
 }
 
+/* donut panel: card docked to the bottom edge, rounded only on the side
+   facing the map; collapsible so the map can take over the freed space */
+.donut-panel {
+  position: relative;
+  background-color: var(--panel-bg);
+  border: 1px solid var(--muted-15);
+  border-bottom: none;
+  border-radius: 12px 12px 0 0;
+  overflow: hidden;
+  transition: flex-basis 0.2s ease;
+}
+.donut-panel.collapsed {
+  flex: 0 0 28px !important;
+  min-height: 0 !important;
+}
+.donut-panel.collapsed .shiny-spinner-output-container,
+.donut-panel.collapsed .plotly {
+  visibility: hidden;
+}
+.donut-toggle {
+  position: absolute;
+  top: 4px;
+  right: 12px;
+  z-index: 10;
+  background: transparent;
+  border: none;
+  color: var(--muted-50);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 4px;
+}
+.donut-toggle:hover { color: var(--accent-pink); }
+
 @media (max-width: 767px) {
-  .well { margin-bottom: 16px; }
+  .well { margin-bottom: 16px; border-radius: 12px; border-left: 1px solid var(--muted-15); }
+  .donut-panel.collapsed { flex: 0 0 28px !important; min-height: 28px !important; }
 }
