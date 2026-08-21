@@ -324,10 +324,10 @@ ui <- fluidPage(
   ),
   sidebarLayout(
     sidebarPanel(
-      textInput("street", "address", value = "3349 n halsted st", placeholder = "123 Main St"),
-      textInput("city",   "city",    value = "chicago",           placeholder = "Chicago"),
-      textInput("state",  "state",   value = "il",                placeholder = "IL"),
-      textInput("zip",    "zip",     value = "60657",             placeholder = "60637"),
+      textInput("street", "address", placeholder = "3349 n halsted st"),
+      textInput("city",   "city",    placeholder = "chicago"),
+      textInput("state",  "state",   placeholder = "il"),
+      textInput("zip",    "zip",     placeholder = "60657"),
       selectInput(
         "radius_mode",
         "mode",
