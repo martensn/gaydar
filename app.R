@@ -94,6 +94,12 @@ national_tract_rates <- readRDS(file.path(root_dir, "data/cache/national_tract_r
 # instead of a raw FIPS code. Tracts have no such lookup (names = NULL). ----
 geo_names <- readRDS(file.path(root_dir, "data/cache/geo_names.rds"))
 
+# ---- national county/PUMA/CD choropleth layers (built offline by
+# code/build_national_geo_layers.R) -- the map renders these directly for
+# those three geography levels instead of dissolving just the geocoded
+# state, so panning covers the whole country. Tract stays per-state. ----
+national_geo_layers <- readRDS(file.path(root_dir, "data/cache/national_geo_layers.rds"))
+
 # ---- geography levels available in the "Geography" selector ----
 # col = the column identifying that unit on a tract row; label = display
 # name (used in the tooltip/popup); names = key into geo_names, or NULL.
@@ -318,10 +324,10 @@ ui <- fluidPage(
   ),
   sidebarLayout(
     sidebarPanel(
-      textInput("street", "address", placeholder = "123 Main St"),
-      textInput("city",   "city",    placeholder = "Chicago"),
-      textInput("state",  "state",   placeholder = "IL"),
-      textInput("zip",    "zip",     placeholder = "60637"),
+      textInput("street", "address", value = "3349 n halsted st", placeholder = "123 Main St"),
+      textInput("city",   "city",    value = "chicago",           placeholder = "Chicago"),
+      textInput("state",  "state",   value = "il",                placeholder = "IL"),
+      textInput("zip",    "zip",     value = "60657",             placeholder = "60637"),
       selectInput(
         "radius_mode",
         "mode",
@@ -585,26 +591,29 @@ server <- function(input, output, session) {
     out
   })
 
-  # ---- dissolve tracts to the selected map geography (tract/county/PUMA/CD) ----
+  # ---- map geography (tract/county/PUMA/CD) ----
   # Only the choropleth map itself respects this -- the radius/metro/state
   # donut comparisons below stay on the raw tract layer (bg_sf()), since
   # those depend on precise areal overlap (a 10-mile buffer, a CBSA) where
   # aggregating first to a coarser geography would badly overstate partial
   # overlaps (e.g. one huge rural PUMA barely clipped by the radius buffer
   # would otherwise contribute its entire population).
+  #
+  # Tract stays scoped to the geocoded state (bg_sf()); county/PUMA/CD use
+  # the offline-precomputed *national* layers (code/build_national_geo_layers.R)
+  # instead of dissolving just the current state, so the choropleth covers
+  # the whole country and users can pan beyond the searched address without
+  # re-geocoding.
   geo_sf <- reactive({
-    req(bg_sf(), input$geo_level)
-    sf_obj <- bg_sf()
-    level  <- input$geo_level
+    req(input$geo_level)
+    level <- input$geo_level
 
-    if (level == "tract") return(sf_obj)
-
-    if (level == "cd") {
-      cd_lookup <- national_tract_rates |> dplyr::distinct(GEOID, cd_id)
-      sf_obj <- sf_obj |> dplyr::left_join(cd_lookup, by = "GEOID")
+    if (level == "tract") {
+      req(bg_sf())
+      return(bg_sf())
     }
 
-    dissolve_geo(sf_obj, geo_level_info[[level]]$col)
+    national_geo_layers[[level]]
   })
 
   # ---- travel-time isochrone: only (re-)fetched on "analyze", never on a
@@ -709,10 +718,31 @@ server <- function(input, output, session) {
         shr_selected = numerator / pmax(denominator, 1)
       )
 
-    # ---- state percentile: rank within this state's own geo_sf() rows ----
+    # ---- state percentile ----
+    # Tract level: geo_sf() is already scoped to the geocoded state, so
+    # rank directly within it. County/PUMA/CD: geo_sf() is now the full
+    # national layer (so the map can be panned anywhere), so "state" has
+    # to mean whichever state *that specific row* is in -- not the
+    # originally-searched address's state -- via a grouped ecdf keyed by
+    # each GEOID's own state-FIPS prefix.
     has_pop <- sf_obj$denominator > 0
-    state_ecdf <- if (any(has_pop)) stats::ecdf(sf_obj$shr_selected[has_pop]) else function(x) NA_real_
-    sf_obj$state_pctile <- ifelse(has_pop, state_ecdf(sf_obj$shr_selected) * 100, NA_real_)
+
+    if (input$geo_level == "tract") {
+      state_ecdf <- if (any(has_pop)) stats::ecdf(sf_obj$shr_selected[has_pop]) else function(x) NA_real_
+      sf_obj$state_pctile <- ifelse(has_pop, state_ecdf(sf_obj$shr_selected) * 100, NA_real_)
+    } else {
+      sf_obj$row_state_fips <- substr(sf_obj$GEOID, 1, 2)
+      pctile_lookup <- sf_obj %>%
+        sf::st_drop_geometry() %>%
+        filter(denominator > 0) %>%
+        group_by(row_state_fips) %>%
+        mutate(state_pctile = { e <- stats::ecdf(shr_selected); e(shr_selected) * 100 }) %>%
+        ungroup() %>%
+        select(GEOID, state_pctile)
+      sf_obj <- sf_obj %>%
+        left_join(pctile_lookup, by = "GEOID") %>%
+        select(-row_state_fips)
+    }
 
     # ---- national percentile: rank within the same metric/gender/geography
     # combo, computed nationally from national_tract_rates ----
@@ -767,7 +797,7 @@ server <- function(input, output, session) {
           tooltip_row(info$label, display_id),
           tooltip_row("lgbtq+", formatC(numerator, format = "f", digits = 0, big.mark = ",")),
           tooltip_row("total", formatC(denominator, format = "f", digits = 0, big.mark = ",")),
-          tooltip_row("percent", sprintf("%.1f%%", shr_selected * 100)),
+          tooltip_row("share", sprintf("%.1f percent", shr_selected * 100)),
           "</table>"
         ) |> lapply(htmltools::HTML),
         popup = paste0(
@@ -775,7 +805,7 @@ server <- function(input, output, session) {
           tooltip_row(info$label, display_id),
           tooltip_row("lgbtq+", formatC(numerator, format = "f", digits = 0, big.mark = ",")),
           tooltip_row("total", formatC(denominator, format = "f", digits = 0, big.mark = ",")),
-          tooltip_row("percent", sprintf("%.1f%%", shr_selected * 100)),
+          tooltip_row("share", sprintf("%.1f percent", shr_selected * 100)),
           tooltip_row("state", fmt_pctile(state_pctile)),
           tooltip_row("national", fmt_pctile(national_pctile)),
           "</table>"
