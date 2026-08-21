@@ -274,6 +274,18 @@ ui <- fluidPage(
         clearTimeout(window._gdResizeTimer);
         window._gdResizeTimer = setTimeout(gdInvalidateMapSize, 200);
       });
+
+      // ---- report viewport width so the server can match the CSS
+      // max-width:767px mobile breakpoint (used to drop the donut center
+      // labels, which don't fit a compressed mobile donut) ----
+      function gdReportClientWidth() {
+        Shiny.setInputValue('client_width', window.innerWidth);
+      }
+      $(document).on('shiny:sessioninitialized', gdReportClientWidth);
+      window.addEventListener('resize', function() {
+        clearTimeout(window._gdWidthTimer);
+        window._gdWidthTimer = setTimeout(gdReportClientWidth, 200);
+      });
     ")),
     tags$style(HTML("
       html, body {
@@ -842,7 +854,11 @@ server <- function(input, output, session) {
   
   # ---- composition plot ----
   output$composition_plot <- plotly::renderPlotly({
-    
+
+    # matches the CSS max-width:767px mobile breakpoint (see client_width's
+    # setup in tags$script above)
+    is_mobile <- isTRUE(input$client_width < 768)
+
     # --- safe summaries (don’t let one failing area kill the whole plot) ---
     safe_summarize <- function(name, expr) {
       out <- tryCatch(expr, error = function(e) NULL)
@@ -960,20 +976,22 @@ server <- function(input, output, session) {
       straight_pop <- sum(sub$count[sub$identity == "non_lgbt"], na.rm = TRUE)
       lgbt_pop <- total_pop - straight_pop
       
-      # ---- CENTER TOTAL (inside donut) ----
-      ann[[length(ann) + 1]] <- list(
+      # ---- CENTER TOTAL (inside donut) -- skipped on mobile, where the
+      # compressed donut width doesn't leave room for two lines of numbers
+      # without them overflowing the ring ----
+      if (!is_mobile) ann[[length(ann) + 1]] <- list(
         x = x_mids[i],
         y = 0.5,
         xref = "paper",
         yref = "paper",
         showarrow = FALSE,
-        
+
         align   = "center",
         xanchor = "center",
         yanchor = "middle",
         text = paste0(
-          "LGBTQ: ", scales::comma(lgbt_pop), "<br>",
-          "Total: ", scales::comma(total_pop),
+          "lgbtq: ", scales::comma(lgbt_pop), "<br>",
+          "total: ", scales::comma(total_pop),
           "</span>"
         ),
         font = list(
@@ -1038,6 +1056,11 @@ server <- function(input, output, session) {
   observeEvent(input$go, {
 
     req(point_sf(), bg_map_layer(), radius_shape())
+
+    # Mobile has no real hover -- a tap fires both the tooltip (label) and
+    # the popup at once, so the short tooltip is dropped there and only the
+    # richer click popup (which has the same fields plus percentiles) shows.
+    is_mobile <- isTRUE(input$client_width < 768)
 
     pt  <- st_transform(point_sf(), 4326)
     bgs <- st_transform(bg_map_layer(), 4326)
@@ -1121,7 +1144,7 @@ server <- function(input, output, session) {
         fillOpacity = 0.7,
         color = "rgba(255, 253, 218, 0.35)",
         weight = 0.4,
-        label = ~label,
+        label = if (is_mobile) NULL else ~label,
         popup = ~popup
       ) |>
       addPolygons(
