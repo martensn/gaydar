@@ -996,7 +996,10 @@ server <- function(input, output, session) {
 
   output$map <- renderLeaflet({
     leaflet() |>
-      addProviderTiles("CartoDB.DarkMatter")
+      addProviderTiles("CartoDB.DarkMatter") |>
+      # match the post-"analyze" zoom, centered on the default address, so
+      # the map doesn't open on an unhelpful zoomed-out world view
+      setView(lng = -87.649285, lat = 41.942942, zoom = 11)
   })
     
   # ---- map (simple highlight) ----
