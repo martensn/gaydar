@@ -142,6 +142,11 @@ aggregate_national <- function(group_col) {
 
 ui <- fluidPage(
   tags$head(
+    # Without this, mobile browsers render at a virtual desktop-width
+    # viewport and scale the page down -- the max-width:767px CSS below
+    # never engages, and Leaflet (unlike Plotly) needs a real, non-zero
+    # container size at init or it silently draws nothing.
+    tags$meta(name = "viewport", content = "width=device-width, initial-scale=1"),
     tags$link(rel = "stylesheet", href = "app-theme.css"),
     tags$script(HTML("
       // Reconfigures the radius slider's range/step/unit when the mode
@@ -253,6 +258,22 @@ ui <- fluidPage(
           setTimeout(gdAttachDonutRainbow, 0);
         }
       });
+
+      // ---- map: recover from a 0-size init -- mobile browsers can settle
+      // the layout (address bar show/hide, viewport meta taking effect)
+      // after Leaflet has already measured a 0-height container, which
+      // otherwise leaves the map permanently blank ----
+      function gdInvalidateMapSize() {
+        var widget = HTMLWidgets.find('#map');
+        if (widget && widget.getMap) widget.getMap().invalidateSize();
+      }
+      $(document).on('shiny:sessioninitialized', function() {
+        setTimeout(gdInvalidateMapSize, 300);
+      });
+      window.addEventListener('resize', function() {
+        clearTimeout(window._gdResizeTimer);
+        window._gdResizeTimer = setTimeout(gdInvalidateMapSize, 200);
+      });
     ")),
     tags$style(HTML("
       html, body {
@@ -290,12 +311,18 @@ ui <- fluidPage(
         .fill-height {
           height: auto;
         }
+        /* height, not min-height: a child's height:100% (leafletOutput,
+           plotlyOutput) only resolves against a parent with an explicit
+           height -- min-height alone leaves the used height 'auto' for
+           percentage-resolution purposes, so the map/donut divs compute to
+           0px even though the panel itself paints at the right size */
         .map-panel {
-          min-height: 400px;
+          flex: 0 0 auto;
+          height: 400px;
         }
         .donut-panel {
           flex: 0 0 auto;
-          min-height: 300px;
+          height: 300px;
         }
       }
     "))
@@ -957,18 +984,23 @@ server <- function(input, output, session) {
       )
 
       # ---- GEOGRAPHY LABEL (above donut) ----
+      # The radius area's internal key (rad_name) carries the live
+      # mileage/duration value so it can be matched against df/sf_obj above
+      # -- the displayed label itself just says "radius", matching the
+      # plain "metro"/"state" style rather than restating the slider value.
+      label_text <- if (a == rad_name) "radius" else a
       ann[[length(ann) + 1]] <- list(
         x = x_mids[i],
         y = 1.05,
         xref = "paper",
         yref = "paper",
         showarrow = FALSE,
-        
+
         align   = "center",
         xanchor = "center",
         yanchor = "bottom",
-        
-        text = paste0("<b>", a, "</b>"),
+
+        text = paste0("<b>", label_text, "</b>"),
         
         font = list(
           family = "Helvetica",
