@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Methods Appendix — Gaydar</title>
+<script>
+  window.MathJax = {
+    tex: {
+      inlineMath: [['$', '$']],
+      displayMath: [['\\[', '\\]']]
+    }
+  };
+</script>
+<script defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+
+<header>
+  <a class="back" href="./">&larr; Back to Gaydar</a>
+</header>
+
+<h1>Methods Appendix: Estimating Local LGBTQ Populations</h1>
+<p class="subtitle">Nicholas Martens</p>
+
+<div class="lede">
+<p><strong>Overview.</strong> I estimate the expected LGBTQ population of every U.S. Census tract in five
+conceptual stages: (1) measure LGBTQ identification and gender-identity
+composition in Household Pulse Survey (HPS) microdata, softly calibrated to
+external Gallup benchmarks; (2) stabilize these rates against sampling noise
+using two complementary smoothing techniques &mdash; one across nearby ages,
+one across states; (3) project the resulting rates onto Census tracts using
+ACS 5-year age&ndash;sex population counts; (4) reweight the within-state spatial
+distribution using the observed geographic concentration of same-sex couples
+as a proxy for the broader LGBTQ population, smoothed across space so the
+result doesn't show artificial jumps at PUMA boundaries; and
+(5) enforce a capacity constraint so no tract's estimate can exceed its
+underlying population. Each stage is detailed in its own section below, with
+the precise notation defined immediately below.</p>
+</div>
+
+<nav class="toc">
+<p>Contents</p>
+<ul>
+  <li><a href="#notation">Notation</a></li>
+  <li><a href="#sec-hps">1. Measurement in HPS Microdata</a></li>
+  <li><a href="#sec-gallup">2. Soft Calibration to Gallup Marginals</a></li>
+  <li><a href="#sec-rates">3. State&ndash;Sex&ndash;Age LGBT Rate Estimation</a></li>
+  <li><a href="#sec-dirichlet">4. Age-Local Dirichlet Smoothing of Gender Composition</a></li>
+  <li><a href="#sec-crossstate">5. Cross-State Shrinkage of LGBT Subcategory Shares</a></li>
+  <li><a href="#sec-acs">6. ACS Projection to Census Tracts</a></li>
+  <li><a href="#sec-puma">7. PUMA Reweighting</a></li>
+  <li><a href="#sec-capacity">8. Capacity Constraint</a></li>
+</ul>
+</nav>
+
+<h2 id="notation">Notation</h2>
+
+<p>Throughout, $i$ indexes survey respondents and $w_i$ denotes HPS survey
+weights. I fix notation of gender and sex up front:</p>
+
+<ul>
+  <li><strong>Sex assigned at birth</strong>, $s \in \{M, F\}$. Since the ACS does not
+  ask about gender identity, I begin with sex assigned at birth.
+  Table B01001 provides tract-level counts of age-sex cells.</li>
+  <li><strong>Gender identity</strong>, $g \in \{\text{cis}, \text{nb},
+  \text{trans}\}$, estimated from HPS in <a href="#sec-dirichlet">Section 4</a>. This
+  is <em>not</em> the same as the final output gender bucket used for
+  population accounting on the map. Instead, the gender identity variable
+  simply flags an individual's relationship to their sex assigned at birth.
+  For example, transgender respondent's gender identity is not their sex
+  assigned at birth, so &ldquo;trans&rdquo; respondents with
+  $s=M$ are trans women and those with $s=F$ are trans men.</li>
+</ul>
+
+<p>I therefore define a third symbol, the <strong>gender bucket</strong>
+$k \in \{m, w, \text{nb}\}$ (man, woman, non-binary), combining the sex
+assigned at birth and gender identity:</p>
+<div class="eq">
+\[
+k(s,g) =
+\begin{cases}
+  m  &amp; (s=M,\ g=\text{cis}) \ \text{or}\ (s=F,\ g=\text{trans}) \\
+  w  &amp; (s=F,\ g=\text{cis}) \ \text{or}\ (s=M,\ g=\text{trans}) \\
+  \text{nb} &amp; g = \text{non-binary}
+\end{cases}
+\]
+</div>
+<p>In words: a cisgender respondent's bucket matches their sex assigned at
+birth; a transgender respondent's bucket does not match their
+sex assigned at birth. Non-binary respondents form their own bucket
+regardless of $s$. Sections 6&ndash;8 report
+quantities indexed by $k$; <a href="#sec-dirichlet">Section 4</a> reports the
+intermediate quantities indexed by $g$ that $k$ is built from.</p>
+
+<p>The remaining recurring symbols are: $a$ for exact age or an ACS age bin;
+$\ell \in \{\text{LG}, \text{Bisexual},
+\text{Queer}\}$ for LGBT subcategory (excluding Trans, which is cross-cut
+with $k$ rather than treated as a fourth member of $\ell$); $p$ for a PUMA
+(Public Use Microdata Area); and $b$ for a Census tract.</p>
+
+<h2 id="sec-hps">1. Measurement in HPS Microdata</h2>
+
+<p>Let $Y_i \in \{0,1\}$ indicate whether individual $i$ identifies as LGBTQ.
+In the HPS, I mark respondents as LGBTQ if they report a sexual orientation besides straight, a trans
+gender identity, or both. Note that non-binary people are not automatically LGBTQ,
+though an overwhelming majority report a non-straight sexuality too.
+Sex assigned at birth $s_i$ and age $a_i$ are taken directly from HPS
+(age top-coded at 62 to limit disclosure risk in the sparse cells of older cohorts). At this raw
+stage, everything is purely survey-based and reflects HPS's own sampling
+variability &mdash; the calibration and smoothing steps that follow exist
+precisely to tame that variability without discarding real geographic and
+demographic heterogeneity.</p>
+
+<p>Survey weights $w_i$ are retained throughout all of the estimation steps
+below.</p>
+
+<h2 id="sec-gallup">2. Soft Calibration to Gallup Marginals</h2>
+
+<p>HPS and Gallup differ in survey mode, sampling variation, and field timing,
+so I don't expect them to agree exactly and I don't force them to.
+Instead, HPS-based probabilities are <em>softly</em> calibrated toward Gallup
+national benchmarks, nudged toward external validity.</p>
+
+<p>Each individual begins with a baseline probability $p_{0i} =
+\text{clipped}(Y_i)$ (clipped away from exactly 0 or 1 so the subsequent
+logit transform is well-defined). A logit adjustment model is estimated:</p>
+<div class="eq">
+\[
+\text{logit}(p_i) = \text{logit}(p_{0i}) + X_i \theta,
+\]
+</div>
+<p>where $X_i$ includes generation effects and generation-by-sex interactions.
+The parameter vector $\theta$ minimizes a weighted objective combining
+(i) a deviation penalty that keeps estimates close to HPS baselines, and
+(ii) a margin penalty that discourages deviation from Gallup targets,
+optimized via BFGS. In practice, this keeps the vast majority of
+state-level estimates within one to two percentage points of Gallup's
+national top-line estimate of roughly 9 percent, while still letting
+genuine state-level heterogeneity show through.</p>
+
+<h2 id="sec-rates">3. State&ndash;Sex&ndash;Age LGBT Rate Estimation</h2>
+
+<p>Using calibrated probabilities, sex&ndash;age&ndash;state LGBT identification rates
+are computed as a straightforward weighted mean:</p>
+<div class="eq">
+\[
+\widehat{P}(Y=1 \mid s, a, \text{state})
+=
+\frac{\sum_i w_i\, p_i^{\text{adj}}}{\sum_i w_i},
+\]
+</div>
+<p>with effective sample size $n_{\text{eff}} = (\sum_i w_i)^2 / \sum_i
+w_i^2$ tracking how much genuine information backs each cell. Weekly HPS
+survey waves are pooled and averaged to reduce short-run noise before this
+step.</p>
+
+<h2 id="sec-dirichlet">4. Age-Local Dirichlet Smoothing of Gender Composition</h2>
+
+<p>This step estimates $P(g \mid \ell, s, a)$ &mdash; the distribution of
+gender-identity type $g \in \{\text{cis}, \text{nb}, \text{trans}\}$ within
+each LGBT subcategory, sex assigned at birth, and exact age (see
+<em>Notation</em> above for why $g$ is deliberately kept distinct from the
+final output bucket $k$).</p>
+
+<p>The raw cell rate is</p>
+<div class="eq">
+\[
+\hat{p}_{g,\ell,s,a} = \frac{n_{g,\ell,s,a}}{\sum_g n_{g,\ell,s,a}},
+\qquad
+n_{\text{eff},\ell,s,a} = \frac{(\sum w_i)^2}{\sum w_i^2},
+\]
+</div>
+<p>where $n_{g,\ell,s,a}$ denotes survey-weighted counts. Some cells are thin;
+in particualr, non-binary and transgender respondents at a single exact age within
+a single sexuality category might often yield sparse cells. Thin cells lead add
+to the raw shares. I address this with two smoothing passes: first
+borrowing strength from <em>nearby ages</em> within a state (this section),
+then, in <a href="#sec-crossstate">Section 5</a>, borrowing strength across
+<em>states</em> for the coarser LGBT subcategory shares.</p>
+
+<h3>4.1 Age-Local Prior Construction</h3>
+
+<p>I motivate the smoothing with a concrete pattern in the data: younger
+AFAB (assigned female at birth) lesbians are roughly 15 percentage points
+more likely to identify as non-binary than AMAB gay men in the same age
+cohort. I also don't want a single noisy exact-age cell to dominate the
+estimate. Age-local smoothing does exactly this: it borrows
+information from <em>nearby</em> ages, weighted by how much data backs each
+neighbor and how close in age they are.</p>
+
+<p>For a focal age $a$, neighboring ages $a' \neq a$ receive weights</p>
+<div class="eq">
+\[
+w_{a'}^{(a)} =
+n_{\text{eff},\ell,s,a'}\,
+\exp\!\left(-\frac{|a-a'|}{\tau}\right),
+\]
+</div>
+<p>where $\tau > 0$ controls how quickly influence decays with age distance.
+The age-local prior mean is then the weighted average of neighboring rates:</p>
+<div class="eq">
+\[
+m_g^{(a)} =
+\frac{\sum_{a' \neq a} w_{a'}^{(a)}\, \hat{p}_{g,\ell,s,a'}}
+{\sum_{a' \neq a} w_{a'}^{(a)}}.
+\]
+</div>
+
+<h3>4.2 Dirichlet Moment Matching</h3>
+
+<p>A Dirichlet prior is centered at $\mathbf{m}^{(a)}$, with concentration
+parameter estimated via method of moments:</p>
+<div class="eq">
+\[
+\alpha_0 =
+\text{mean}_g\!\left(\frac{m_g(1-m_g)}{v_g} - 1\right),
+\]
+</div>
+<p>where $v_g$ is the weighted variance of $\hat p_{g,\ell,s,a'}$ across
+neighboring ages $a'$ &mdash; intuitively, how much the neighbors agree with
+each other. The prior vector is $\alpha_g = \alpha_0\, m_g$.</p>
+
+<h3>4.3 Posterior Shrinkage</h3>
+
+<p>The smoothed estimate for focal age $a$ blends the raw cell rate with the
+age-local prior, weighted by how much real data each side has:</p>
+<div class="eq">
+\[
+\tilde{p}_{g,\ell,s,a}
+=
+\frac{n_{\text{eff},\ell,s,a}\,\hat{p}_{g,\ell,s,a} + \alpha_g}
+{n_{\text{eff},\ell,s,a} + \alpha_0}.
+\]
+</div>
+<p>A well-sampled cell ($n_{\text{eff}}$ large relative to $\alpha_0$) stays
+close to its raw rate; a thin cell shrinks toward the age-local prior.</p>
+
+<h2 id="sec-crossstate">5. Cross-State Shrinkage of LGBT Subcategory Shares</h2>
+
+<p>The same thin-cell problem recurs one level up: some LGBT subcategory
+shares are sparsely measured within individual states (transgender
+respondents in any single state, or bisexual respondents in a small state
+like Wyoming). For each sex $s$, age bin $a$, and LGBT category $\ell$, I
+define the state-level share</p>
+<div class="eq">
+\[
+\hat{\pi}_{\ell,s,a,j} = P(\ell \mid Y=1, s, a, \text{state } j),
+\]
+</div>
+<p>with effective sample size $n_{\text{eff},j}$. Rather than age, the natural
+borrowing dimension here is <em>across states</em>: a beta prior is fit by
+method of moments across the 50-state (plus DC) distribution of
+$\hat\pi_{\ell,s,a,j}$, $\pi_{\ell,s,a,j} \sim \text{Beta}(\alpha,\beta)$,
+and posterior shrinkage gives</p>
+<div class="eq">
+\[
+\tilde{\pi}_{\ell,s,a,j}
+=
+\frac{n_{\text{eff},j}\,\hat{\pi}_{\ell,s,a,j} + \alpha}
+{n_{\text{eff},j} + \alpha + \beta}.
+\]
+</div>
+<p>Final shares are renormalized within each state&ndash;sex&ndash;age bin so they sum
+to one. This preserves genuine state-to-state heterogeneity &mdash; some states
+really do have different LGBT subcategory compositions &mdash; while damping
+the noise that would otherwise dominate small states or thin cells.</p>
+
+<h2 id="sec-acs">6. ACS Projection to Census Tracts</h2>
+
+<p>Let $N_b^{(s,a)}$ denote the ACS 5-year population count for sex assigned
+at birth $s \in \{M,F\}$ and age bin $a$ in Census tract $b$. I now combine
+every rate estimated above &mdash; identification, subcategory share, and
+gender-identity composition &mdash; with local ACS demographics to get an
+expected count for each tract, LGBT subcategory, and output gender bucket
+$k \in \{m, w, \text{nb}\}$:</p>
+<div class="eq">
+\[
+\hat{E}[\text{count}_{k,\ell,b}]
+=
+\sum_{s,a} N_b^{(s,a)}
+\cdot \widehat{P}(Y=1 \mid s,a,\text{state})
+\cdot \tilde\pi_{\ell,s,a}
+\cdot \!\!\sum_{g\,:\,k(s,g)=k}\!\! \tilde p_{g,\ell,s,a}.
+\]
+</div>
+<p>The innermost sum collapses the gender-identity-type rate $\tilde
+p_{g,\ell,s,a}$ from <a href="#sec-dirichlet">Section 4</a> into the output bucket $k$
+using the $(s,g)\mapsto k$ mapping defined in <em>Notation</em>. Because
+identification, subcategory, and gender-identity rates all vary with age
+and sex, and both vary locally, expected LGBTQ counts vary across tracts
+even within a single state &mdash; this section captures only the
+<em>demographic composition</em> channel of that variation; the next section
+adds a <em>geographic clustering</em> channel on top of it.</p>
+
+<p>Tracts that span PUMA boundaries receive population-weighted contributions
+from each overlapping PUMA, proportional to the area of intersection.</p>
+
+<h2 id="sec-puma">7. PUMA Reweighting</h2>
+
+<p>Spatial sorting shapes the spatial distribution of LGBTQ people across United States.
+LGBTQ cluter for many reasons, including proximity to community infrastructure,
+local social tolerance, idiosyncratic amenity preferences, and more.
+Yet the projection in <a href="#sec-acs">Section 6</a> allocates LGBTQ population using
+only local age and sex composition &mdash; it offers no mechanism
+for the spatial sort of LGBTQ people beyond age and sex.
+I use the observed concentration of same-sex couples as a proxy
+for the broader LGBTQ population's spatial distribution.</p>
+
+<p>Formally, within a state I assume same-sex couples and all LGBTQ people
+have the same probability of selecting a given PUMA conditional on living
+in that state. This is an approximation, not an identity: same-sex couples
+tend to be older, wealthier, better-educated, and more likely to identify
+as gay or lesbian than the broader LGBTQ population, so their spatial
+concentration could systematically differ from, say, young queer
+individuals'. I accept this approximation because it still captures real
+geographic signal the age/sex projection alone misses entirely, and because
+the calibration strength is a single tunable parameter ($\gamma$ below)
+rather than a hard constraint.</p>
+
+<h3>7.1 PUMA Calibration Factors</h3>
+
+<p>For each PUMA $p$, define the uncalibrated LGBTQ share of the state total
+projected in <a href="#sec-acs">Section 6</a>:</p>
+<div class="eq">
+\[
+S_p = \frac{\sum_{b \in p} \hat{E}[\text{LGBTQ}_b]}
+{\sum_{p'} \sum_{b \in p'} \hat{E}[\text{LGBTQ}_b]}.
+\]
+</div>
+<p>I construct a same-sex-couple signal from ACS Table B09019 counts of
+same-sex (SS) and opposite-sex (OS) couples by PUMA. PUMAs with fewer than
+100 total couples are dropped as too noisy to trust, and the raw
+same-sex share is winsorized to the 1st&ndash;99th percentile across PUMAs
+before transforming, to keep a handful of tiny, extreme PUMAs from
+dominating the calibration:</p>
+<div class="eq">
+\[
+\hat q_p = \text{winsorize}_{[0.01,\,0.99]}
+\!\left(\frac{\text{SS couples}_p}{\text{SS couples}_p + \text{OS couples}_p}\right).
+\]
+</div>
+<p>The signal is then logit-transformed and mean-centered relative to the
+<em>uncalibrated</em> LGBTQ distribution, so it measures relative rather than
+absolute concentration:</p>
+<div class="eq">
+\[
+\tilde{\sigma}_p
+=
+\text{logit}(\hat q_p)
+\;-\;
+\sum_{p'} S_{p'}\,\text{logit}(\hat q_{p'}).
+\]
+</div>
+<p>For PUMAs with fewer than 100 couples (dropped above, hence no $\hat q_p$),
+I set $\tilde\sigma_p = 0$: no tilt in either direction, equivalent to
+leaving the raw uncalibrated share $S_p$ untouched.</p>
+
+<p>The tilt factor for PUMA $p$ is $T_p = \exp(\gamma\, \tilde\sigma_p)$,
+where $\gamma > 0$ governs how strongly the reweighting responds to the
+same-sex-couple signal (site defaults to $\gamma = 0.5$, a deliberately
+conservative choice given the approximation discussed above). The
+calibrated target share and resulting calibration factor are</p>
+<div class="eq">
+\[
+S_p^* = \frac{S_p\, T_p}{\sum_{p'} S_{p'}\, T_{p'}},
+\qquad
+\hat{c}_p = \frac{S_p^*}{S_p}.
+\]
+</div>
+
+<h3>7.2 Inverse-Distance-Weighted Smoothing to Tract Level</h3>
+
+<p>Applying $\hat c_p$ uniformly to every tract within PUMA $p$ produces a
+step-function surface, with hard discontinuities at PUMA
+boundaries. Yet those jumps stem from where the Census Bureau happened
+to draw PUMA lines, not real demographic transitions.
+Hence, I smooth the calibration factors to the tract level using inverse-distance weighting
+(IDW) instead of applying them as a step function.</p>
+
+<p>Let $\mathbf{x}_b$ and $\mathbf{x}_p$ denote the projected-coordinate
+(EPSG:3857) centroids of tract $b$ and PUMA $p$. The IDW-smoothed
+calibration factor for tract $b$ is</p>
+<div class="eq">
+\[
+\tilde{c}_b
+=
+\frac{\displaystyle\sum_p \|\mathbf{x}_b - \mathbf{x}_p\|^{-2}\, \hat{c}_p}
+     {\displaystyle\sum_p \|\mathbf{x}_b - \mathbf{x}_p\|^{-2}}.
+\]
+</div>
+<p>A tract deep inside a single PUMA receives a factor close to that PUMA's
+$\hat c_p$; a tract near a PUMA boundary receives a blend of the
+neighboring PUMAs' factors, weighted by inverse squared distance. This
+preserves the geographic heterogeneity the calibration is meant to capture
+while producing a spatially continuous surface with no visible seams.
+Checked against Michigan's 4,148 tracts and 68 PUMAs, IDW weights sum to
+1.0 in every tract by construction, and resulting calibration factors range
+from 0.81 to 1.19 &mdash; a meaningfully wide spread of local tilt, but nowhere
+near a discontinuous jump.</p>
+
+<p>All subcategory estimates in tract $b$ are multiplied by $\tilde c_b$, and
+the whole state is rescaled so totals match the uncalibrated projection
+from <a href="#sec-acs">Section 6</a>:</p>
+<div class="eq">
+\[
+\text{scale} =
+\frac{\sum_b \hat{E}[\text{LGBTQ}_b]}{\sum_b \tilde c_b\, \hat{E}[\text{LGBTQ}_b]}.
+\]
+</div>
+
+<h2 id="sec-capacity">8. Capacity Constraint</h2>
+
+<p>The PUMA reweighting above is, by design, a multiplicative tilt &mdash; and
+multiplicative tilts have no natural ceiling. In high-concentration areas,
+reweighting and state-level rescaling can occasionally push a tract's
+estimated count for an output gender bucket $k$ above that bucket's actual
+population, which is nonsensical: no tract can contain more LGBTQ men than
+it contains men.</p>
+
+<p>For output gender bucket $k \in \{m, w, \text{nb}\}$ and tract $b$, let
+$\hat N^{\text{LGBTQ}}_{k,b}$ denote the post-calibration LGBTQ count and
+$N_{k,b}$ the bucket's total population. I cap each bucket at its
+population ceiling and scale every LGBTQ subcategory within that bucket down
+proportionally, preserving relative composition:</p>
+<div class="eq">
+\[
+\kappa_{k,b} = \min\!\left(1,\; \frac{N_{k,b}}{\hat N^{\text{LGBTQ}}_{k,b}}
+\right),
+\]
+</div>
+<p>with every subcategory count for bucket $k$ in tract $b$ multiplied by
+$\kappa_{k,b}$. Imposition of the capacity constraint is rare; in Michigan,
+the constraint bound only 64 tracts.
+Even when the constraint affects a tract's population, the aggregate consequences
+of the constraint are minute.</p>
+
+<footer>
+  <a href="./">&larr; Back to Gaydar</a> &middot; <a href="data.html">Data</a> &middot; <a href="https://github.com/martensn/gaydar">Git repository</a>
+</footer>
+
+</body>
+</html>
