@@ -162,13 +162,15 @@ ui <- fluidPage(
       // since neither is a plain <a> text link CSS can animate directly.
       var GD_RAINBOW = ['#ff6b6b','#ffd93d','#6bcb77','#4d96ff','#9b59b6','#ff1493','#ff8c00'];
 
-      // ---- map: delegated hover on the leaflet SVG pane, so it keeps
-      // working across every clearShapes()/addPolygons() redraw without
-      // needing to re-attach listeners per tract ----
+      // ---- map: delegated hover, attached to `document` rather than the
+      // #map div -- this script runs in <head>, before Shiny has rendered
+      // the leaflet widget into the body, so #map doesn't exist yet at
+      // attach time. document always exists, and by the time a real hover
+      // happens the tract paths certainly do too. Excludes the address-
+      // point marker (also a path.leaflet-interactive) via its own class. ----
       (function() {
-        var mapEl = document.getElementById('map');
-        if (!mapEl) return;
         var active = null, idx = 0, timer = null, orig = null;
+        var SEL = 'path.leaflet-interactive:not(.gd-address-marker)';
 
         function start(path) {
           if (active === path) return;
@@ -192,13 +194,13 @@ ui <- fluidPage(
           }
           active = null;
         }
-        mapEl.addEventListener('mouseover', function(e) {
-          var path = e.target.closest && e.target.closest('path.leaflet-interactive');
+        document.addEventListener('mouseover', function(e) {
+          var path = e.target.closest && e.target.closest(SEL);
           if (path) start(path);
         });
-        mapEl.addEventListener('mouseout', function(e) {
+        document.addEventListener('mouseout', function(e) {
           var toEl = e.relatedTarget;
-          var stillInside = toEl && toEl.closest && toEl.closest('path.leaflet-interactive') === active;
+          var stillInside = toEl && toEl.closest && toEl.closest(SEL) === active;
           if (!stillInside) stop();
         });
       })();
@@ -1059,7 +1061,7 @@ server <- function(input, output, session) {
       ) |>
       addPolygons(
         data = radius_outline,
-        interactive = FALSE,
+        options = pathOptions(interactive = FALSE),
         color = "#fffdda",
         weight = 1,
         fill = FALSE,
@@ -1069,7 +1071,8 @@ server <- function(input, output, session) {
         data = pt,
         radius = 6,
         color = "#ff1493",
-        fillOpacity = 1
+        fillOpacity = 1,
+        options = pathOptions(className = "gd-address-marker")
       ) |>
       addControl(
         html = HTML(legend_html),
