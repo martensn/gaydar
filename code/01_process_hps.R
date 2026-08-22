@@ -172,6 +172,44 @@ smooth_age_dirichlet_decay <- function(df, tau = 3) {
 }
 
 
+# Empirical Bayes smoothing of a scalar proportion (e.g. married share) with
+# age-local priors, same decay-weighted-neighbor logic as
+# smooth_age_dirichlet_decay() above but for a single Beta share instead of a
+# Dirichlet-distributed composition vector.
+smooth_age_beta_decay <- function(df, tau = 3) {
+
+  df %>%
+    group_by(lgbt_cat, sex, gen_cat) %>%
+    group_modify(function(d_group, keys) {
+
+      ages <- sort(unique(d_group$age))
+
+      purrr::map_dfr(ages, function(a) {
+
+        d_focal <- d_group %>% filter(age == a)
+
+        d_neighbors <- d_group %>%
+          filter(age != a, n_eff > 0)
+
+        if (nrow(d_neighbors) == 0) {
+          return(d_focal %>% mutate(married_shr_eb = married_shr))
+        }
+
+        d_neighbors <- d_neighbors %>%
+          mutate(w_adj = n_eff * exp(-abs(age - a) / tau))
+
+        fb <- fit_beta_mom(d_neighbors$married_shr, w = d_neighbors$w_adj)
+
+        d_focal %>%
+          mutate(
+            married_shr_eb = (n_eff * married_shr + fb$alpha) / (n_eff + fb$alpha + fb$beta)
+          )
+      })
+    }) %>%
+    ungroup()
+}
+
+
 file_list <- list.files(file.path(root_dir,"data/hps"))
 file_list <- file_list[str_detect(file_list, ".csv") & !str_detect(file_list, "repwgt")]
 
@@ -242,14 +280,29 @@ hps_micro <- hps %>%
       GENID_DESCRIBE == 4 & EGENID_BIRTH == 1 ~ "NB AMAB",
       GENID_DESCRIBE == 4 & EGENID_BIRTH == 2 ~ "NB AFAB"
     ),
+    # SEXUAL_ORIENTATION: 1 Gay/lesbian, 2 Straight, 3 Bisexual,
+    # 4 Something else, 5 I don't know. Category 5 ("I don't know") is
+    # treated as not-confidently-LGBT rather than folded into "Queer" --
+    # someone unsure enough to answer "I don't know" isn't a confident LGBT
+    # identification, and merging it into Queer produced an implausible
+    # rising-with-age pattern (older respondents answering "I don't know"
+    # for non-identity reasons swamping genuine "something else" identity).
     lgbt_cat = case_when(
       #gender_cat %in% c("Trans man", "Trans woman") ~ "Trans",
-      SEXUAL_ORIENTATION == 3     ~ "Bisexual",
-      SEXUAL_ORIENTATION == 1     ~ "LG",
-      SEXUAL_ORIENTATION %in% c(4,5) ~ "Queer",
+      SEXUAL_ORIENTATION == 3 ~ "Bisexual",
+      SEXUAL_ORIENTATION == 1 ~ "LG",
+      SEXUAL_ORIENTATION == 4 ~ "Queer",
       TRUE ~ "Straight"
     ),
-    y_lgbt = as.integer(lgbt_cat != "Straight")
+    y_lgbt = as.integer(lgbt_cat != "Straight"),
+    # MS: 1 Married, 2 Widowed, 3 Divorced, 4 Separated, 5 Never married, -99 missing.
+    # HPS has no unmarried-cohabiting-partner flag, so "married" is the closest
+    # available proxy for "coupled" -- used as the PUMA-reweighting blend weight.
+    married = case_when(
+      MS == 1          ~ 1L,
+      MS %in% 2:5       ~ 0L,
+      TRUE              ~ NA_integer_
+    )
   ) %>%
   filter(!is.na(sex), !is.na(gen), !is.na(PWEIGHT), PWEIGHT > 0) %>%
   mutate(
@@ -343,32 +396,83 @@ gsf_eb_bin = gsf_eb %>%
 saveRDS(gsf_eb_bin,file.path(root_dir,"data/hps","age_bin_gender_sexuality.rds"))
 
 
-# Compute relative shares of LGBT sub-populations by age-sex-state
+# --- Nationwide married-share by (sex, gender identity, sexuality, age bin) ---
+# Used by the PUMA-reweighting step (code/helpers.R) as the per-cell blend
+# weight between the same-sex-couples spatial signal and the singles spatial
+# signal. Nationwide (not state-varying) -- HPS cells are already thin once
+# split by sex/gender/sexuality/age, splitting further by state would leave
+# too little sample to be usable.
+married_flow <- hps_micro %>%
+  # Same age topcode as gen_sex_flow above, for the same reason (Dirichlet/
+  # Beta smoothing misbehaves once per-age sample gets too thin near 62+).
+  mutate(age = if_else(age > 62, 62, age)) %>%
+  filter(!is.na(gender_cat), !is.na(married)) %>%
+  mutate(
+    gen_cat = case_when(
+      gender_cat %in% c("Cis man","Cis woman") ~ "cis",
+      gender_cat %in% c("NB AFAB", "NB AMAB")   ~ "non_binary",
+      gender_cat %in% c("Trans man","Trans woman") ~ "trans"
+    )
+  ) %>%
+  group_by(lgbt_cat, sex, gen_cat, age) %>%
+  summarize(
+    married_shr = weighted.mean(married, PWEIGHT, na.rm = TRUE),
+    w_sum  = sum(PWEIGHT, na.rm = TRUE),
+    w2_sum = sum(PWEIGHT^2, na.rm = TRUE),
+    n_eff  = ifelse(w2_sum > 0, (w_sum^2) / w2_sum, NA_real_),
+    .groups = "drop"
+  )
+
+# Tau matches gen_sex_flow's smoothing above
+married_eb <- smooth_age_beta_decay(married_flow, tau = 3)
+
+# Collapse to ACS age bins (62+ collapsed), same grain as age_bin_gender_sexuality.rds
+married_share_by_cell <- married_eb %>%
+  left_join(acs_age_bins, by = join_by(age >= age_lo, age <= age_hi)) %>%
+  group_by(lgbt_cat, sex, gen_cat, acs_bin_col) %>%
+  summarize(
+    married_shr = weighted.mean(married_shr_eb, w = w_sum, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  # Floor/ceiling so no cell relies entirely on one spatial signal
+  mutate(married_shr = pmin(pmax(married_shr, 0.05), 0.95))
+
+saveRDS(married_share_by_cell, file.path(root_dir,"data/hps","married_share_by_cell.rds"))
+
+
+# Compute relative shares of LGBT sub-populations by age-sex, pooled
+# nationally rather than by state. The overall LGBT identification RATE
+# (lgbt_shr, below) is the primary geographic signal and stays state-level,
+# Gallup-calibrated -- but the *mix* of LG vs Bisexual vs Queer among people
+# who do identify as LGBT is a much thinner slice of the HPS sample once
+# split by sex x state x age bin x category, and cross-state Beta-shrinkage
+# wasn't enough to make individual states' composition estimates trustworthy.
+# Pooling nationally trades away state-level composition variation (which
+# was mostly noise) for a much larger effective sample per age bin.
 hps_micro_comp <- hps_micro %>%
   left_join(acs_age_bins, by = join_by(age >= age_lo, age <= age_hi)) %>%
   filter(y_lgbt == 1)
 
 comp_week <- hps_micro_comp %>%
-  group_by(sex, EST_ST, acs_bin, WEEK, lgbt_cat) %>%
+  group_by(sex, acs_bin, WEEK, lgbt_cat) %>%
   summarise(
     w_cat = sum(PWEIGHT, na.rm = TRUE),
     .groups = "drop"
   ) %>%
-  group_by(sex, EST_ST, acs_bin, WEEK) %>%
+  group_by(sex, acs_bin, WEEK) %>%
   mutate(
     w_total = sum(w_cat),
     shr_cat = w_cat / pmax(w_total, 1e-12)
   )
 
-# Conditional probabilities of LGBT sub-populations with a given sex-state-age cell
+# Conditional probabilities of LGBT sub-populations within a given sex-age cell
 comp_rates <- comp_week %>%
-  left_join(state_crosswalk %>% select(state_fips,state_abbr), by = c("EST_ST"="state_fips")) %>%
-  group_by(sex, state_abbr, acs_bin, lgbt_cat) %>%
+  group_by(sex, acs_bin, lgbt_cat) %>%
   summarise(
     shr_cat = mean(shr_cat, na.rm = TRUE),
     .groups = "drop"
   ) %>%
-  transmute(sex, state_abbr, acs_bin, lgbt_cat, shr_cat)
+  transmute(sex, acs_bin, lgbt_cat, shr_cat)
 
 # Compute sum of person weights and n_eff, which measures the quality of the signal
 hps_gallup_week <- hps_micro %>%
@@ -397,38 +501,26 @@ hps_gallup_rates <- hps_gallup_week %>%
   left_join(state_crosswalk, by = c("EST_ST" = "state_fips")) %>%
   transmute(sex, state, state_abbr, acs_bin, n_wsum, n_eff, lgbt_shr)
 
-# Empirical Bayes smoothing on the sub-population shares
-# Shrinking towards averages by age across states 
+# No cross-state shrinkage needed any more -- comp_rates is already national.
+# Just renormalize so LG/Bisexual/Queer/Straight sum to 1 within each
+# (sex, acs_bin) cell (week-averaging above isn't guaranteed to land exactly
+# on 1, since not every category necessarily appears in every week).
 comp_rates_eb <- comp_rates %>%
-  left_join(
-    hps_gallup_rates %>% select(sex, state_abbr, acs_bin, n_eff),
-    by = c("sex","state_abbr","acs_bin")
-  ) %>%
-  filter(!is.na(lgbt_cat), !is.na(shr_cat), !is.na(n_eff), n_eff > 0) %>%
-  group_by(sex, acs_bin, lgbt_cat) %>%
-  group_modify(~{
-    d <- .x
-    # If only 1 state in this group, nothing to shrink
-    if (nrow(d) < 2) return(d %>% mutate(shr_cat_eb = shr_cat))
-    
-    fb <- fit_beta_mom(d$shr_cat, w = d$n_eff)
-    
-    d %>% mutate(
-      shr_cat_eb = (n_eff * shr_cat + fb$alpha) / (n_eff + fb$alpha + fb$beta)
-    )
-  }) %>%
-  ungroup() %>%
-  group_by(sex, state_abbr, acs_bin) %>%
+  filter(!is.na(lgbt_cat), !is.na(shr_cat)) %>%
+  group_by(sex, acs_bin) %>%
   mutate(
-    shr_cat_eb = shr_cat_eb / sum(shr_cat_eb, na.rm = TRUE)
+    shr_cat_eb = shr_cat / sum(shr_cat, na.rm = TRUE)
   ) %>%
   ungroup()
 
-# Unconditional rates of identity by population
+# Unconditional rates of identity by population. lgbt_shr (overall LGBT
+# identification rate) stays state-level; shr_cat_eb (the LG/Bisexual/Queer
+# mix conditional on identifying as LGBT) is now the same nationwide
+# composition applied to every state's own identification rate.
 rates_final <- hps_gallup_rates %>%
   left_join(
-    comp_rates_eb %>% select(sex, state_abbr, acs_bin, lgbt_cat, shr_cat_eb),
-    by = c("sex","state_abbr","acs_bin")
+    comp_rates_eb %>% select(sex, acs_bin, lgbt_cat, shr_cat_eb),
+    by = c("sex","acs_bin")
   ) %>%
   mutate(
     lgbt_cat_shr = lgbt_shr * shr_cat_eb
