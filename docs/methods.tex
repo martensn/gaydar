@@ -19,16 +19,7 @@
 I estimate the expected LGBTQ population of every U.S. Census tract in five
 conceptual stages: (1) measure LGBTQ identification and gender-identity
 composition in Household Pulse Survey (HPS) microdata, softly calibrated to
-external Gallup benchmarks; (2) stabilize these rates against sampling noise
-using two complementary smoothing techniques --- one across nearby ages,
-one across states; (3) project the resulting rates onto Census tracts using
-ACS 5-year age--sex population counts; (4) reweight the within-state spatial
-distribution using the observed geographic concentration of same-sex couples
-as a proxy for the broader LGBTQ population, smoothed across space so the
-result doesn't show artificial jumps at PUMA boundaries; and
-(5) enforce a capacity constraint so no tract's estimate can exceed its
-underlying population. Each stage is detailed in its own section below, with
-the precise notation defined immediately below.
+external Gallup benchmarks; (2) stabilize these rates against sampling noise using two complementary smoothing techniques — one across nearby ages, one across states; (3) project the resulting rates onto Census tracts using ACS 5-year age–sex population counts; (4) reweight the within-state spatial distribution using the observed geographic concentration of same-sex couples and singles within an age-sex cell as a proxy for the broader LGBTQ population, smoothed across space so the result doesn't show artificial jumps at PUMA boundaries; and (5) enforce a capacity constraint so no tract's estimate can exceed its underlying population. Each stage is detailed in its own section below, with the precise notation defined immediately below.
 
 \section*{Notation}
 
@@ -36,21 +27,21 @@ Throughout, $i$ indexes survey respondents and $w_i$ denotes HPS survey
 weights. I fix notation of gender and sex up front:
 
 \begin{itemize}
-  \item \textbf{Sex assigned at birth}, $s \in \{M, F\}$. Since the ACS does not 
+  \item \textbf{Sex assigned at birth}, $s \in \{M, F\}$. Since the ACS does not
   ask about gender identity, I begin with sex assigned at birth.
   Table B01001 provides tract-level counts of age-sex cells.
   \item \textbf{Gender identity}, $g \in \{\text{cis}, \text{nb},
   \text{trans}\}$, estimated from HPS in Section~\ref{sec:dirichlet}. This
   is \emph{not} the same as the final output gender bucket used for
   population accounting on the map. Instead, the gender identity variable
-  simply flags an individual's relationship to their sex assigned at birth. 
-  For example, transgender respondent's gender identity is not their sex 
+  simply flags an individual's relationship to their sex assigned at birth.
+  For example, transgender respondent's gender identity is not their sex
   assigned at birth, so ``trans'' respondents with
   $s=M$ are trans women and those with $s=F$ are trans men.
 \end{itemize}
 
 I therefore define a third symbol, the \textbf{gender bucket}
-$k \in \{m, w, \text{nb}\}$ (man, woman, non-binary), combining the sex 
+$k \in \{m, w, \text{nb}\}$ (man, woman, non-binary), combining the sex
 assigned at birth and gender identity:
 \[
 k(s,g) =
@@ -67,7 +58,7 @@ regardless of $s$. Sections~\ref{sec:acs}--\ref{sec:capacity} report
 quantities indexed by $k$; Section~\ref{sec:dirichlet} reports the
 intermediate quantities indexed by $g$ that $k$ is built from.
 
-The remaining recurring symbols are: $a$ for exact age or an ACS age bin; 
+The remaining recurring symbols are: $a$ for exact age or an ACS age bin;
 $\ell \in \{\text{LG}, \text{Bisexual},
 \text{Queer}\}$ for LGBT subcategory (excluding Trans, which is cross-cut
 with $k$ rather than treated as a fourth member of $\ell$); $p$ for a PUMA
@@ -76,16 +67,11 @@ with $k$ rather than treated as a fourth member of $\ell$); $p$ for a PUMA
 \section{Measurement in HPS Microdata}
 
 Let $Y_i \in \{0,1\}$ indicate whether individual $i$ identifies as LGBTQ.
-In the HPS, I mark respondents as LGBTQ if they report a sexual orientation besides straight, a trans 
+In the HPS, I mark respondents as LGBTQ if they report a sexual orientation besides straight, a trans
 gender identity, or both. Note that non-binary people are not automatically LGBTQ,
 though an overwhelming majority report a non-straight sexuality too.
 Sex assigned at birth $s_i$ and age $a_i$ are taken directly from HPS
-(age top-coded at 62 to limit disclosure risk in the sparse cells of older cohorts). At this raw
-stage, everything is purely survey-based and reflects HPS's own sampling
-variability -- the calibration and smoothing steps that follow exist
-precisely to tame that variability without discarding real geographic and
-demographic heterogeneity.
-
+(age top-coded at 62 to limit disclosure risk in the sparse cells of older cohorts).
 Survey weights $w_i$ are retained throughout all of the estimation steps
 below.
 
@@ -140,13 +126,13 @@ The raw cell rate is
 \qquad
 n_{\text{eff},\ell,s,a} = \frac{(\sum w_i)^2}{\sum w_i^2},
 \]
-where $n_{g,\ell,s,a}$ denotes survey-weighted counts. Some cells are thin; 
-in particualr, non-binary and transgender respondents at a single exact age within
-a single sexuality category might often yield sparse cells. Thin cells lead add 
-to the raw shares. I address this with two smoothing passes: first
+where $n_{g,\ell,s,a}$ denotes survey-weighted counts. Some cells are thin;
+in particular, non-binary and transgender respondents at a single exact age within
+a single sexuality category might often yield sparse cells. 
+I address this with two smoothing passes: first
 borrowing strength from \emph{nearby ages} within a state (this section),
-then, in Section~\ref{sec:crossstate}, borrowing strength across
-\emph{states} for the coarser LGBT subcategory shares.
+then, in Section~\ref{sec:crossstate}, pooling the coarser LGBT subcategory
+shares \emph{nationally}.
 
 \subsection{Age-Local Prior Construction}
 
@@ -197,32 +183,23 @@ age-local prior, weighted by how much real data each side has:
 A well-sampled cell ($n_{\text{eff}}$ large relative to $\alpha_0$) stays
 close to its raw rate; a thin cell shrinks toward the age-local prior.
 
-\section{Cross-State Shrinkage of LGBT Subcategory Shares}
+\section{National LGBT Subcategory Composition}
 \label{sec:crossstate}
 
-The same thin-cell problem recurs one level up: some LGBT subcategory
-shares are sparsely measured within individual states (transgender
-respondents in any single state, or bisexual respondents in a small state
-like Wyoming). For each sex $s$, age bin $a$, and LGBT category $\ell$, I
-define the state-level share
+For each sex $s$ and age bin $a$, I also need the split between LG, Bisexual, and Queer identification after conditioning on LGBTQ identity. I pool nationally instead of estimating by state:
 \[
-\hat{\pi}_{\ell,s,a,j} = P(\ell \mid Y=1, s, a, \text{state } j),
-\]
-with effective sample size $n_{\text{eff},j}$. Rather than age, the natural
-borrowing dimension here is \emph{across states}: a beta prior is fit by
-method of moments across the 50-state (plus DC) distribution of
-$\hat\pi_{\ell,s,a,j}$, $\pi_{\ell,s,a,j} \sim \text{Beta}(\alpha,\beta)$,
-and posterior shrinkage gives
-\[
-\tilde{\pi}_{\ell,s,a,j}
+\tilde\pi_{\ell,s,a}
 =
-\frac{n_{\text{eff},j}\,\hat{\pi}_{\ell,s,a,j} + \alpha}
-{n_{\text{eff},j} + \alpha + \beta}.
+\frac{\hat\pi_{\ell,s,a}}{\sum_{\ell'} \hat\pi_{\ell',s,a}},
+\qquad
+\hat\pi_{\ell,s,a} = \text{mean over HPS weeks of the national }
+(s,a)\text{ share identifying as } \ell.
 \]
-Final shares are renormalized within each state--sex--age bin so they sum
-to one. This preserves genuine state-to-state heterogeneity -- some states
-really do have different LGBT subcategory compositions -- while damping
-the noise that would otherwise dominate small states or thin cells.
+Every state now applies the same LG/Bisexual/Queer mix to its own
+state-level, Gallup-calibrated LGBT identification rate $\widehat
+P(Y=1\mid s,a,\text{state})$ from Section 3 -- states differ in \emph{how
+many} people identify as LGBT, but not in \emph{the mix
+of labels} people use.
 
 \section{ACS Projection to Census Tracts}
 \label{sec:acs}
@@ -248,108 +225,139 @@ identification, subcategory, and gender-identity rates all vary with age
 and sex, and both vary locally, expected LGBTQ counts vary across tracts
 even within a single state -- this section captures only the
 \emph{demographic composition} channel of that variation; the next section
-adds a \emph{geographic clustering} channel on top of it.
+adds a \emph{geographic clustering} channel on top of it. For the PUMA
+reweighting step below, the per-cell summand of this sum -- indexed by
+$(s,g,\ell,a,b)$, before summing over $s,a$ and collapsing $g$ into $k$ --
+is what actually gets reweighted; this formula shows the result after that
+collapse.
 
 Tracts that span PUMA boundaries receive population-weighted contributions
 from each overlapping PUMA, proportional to the area of intersection.
 
 \section{PUMA Reweighting}
 
-Spatial sorting shapes the spatial distribution of LGBTQ people across United States.
-LGBTQ cluter for many reasons, including proximity to community infrastructure, 
-local social tolerance, idiosyncratic amenity preferences, and more.
-Yet the projection in Section~\ref{sec:acs} allocates LGBTQ population using
-only local age and sex composition -- it offers no mechanism 
-for the spatial sort of LGBTQ people beyond age and sex. 
-I use the observed concentration of same-sex couples as a proxy
-for the broader LGBTQ population's spatial distribution.
+Spatial sorting shapes the spatial distribution of LGBTQ people across the
+United States. LGBTQ people cluster for many reasons, including proximity
+to community infrastructure, local social tolerance, idiosyncratic amenity
+preferences, and more. Yet the projection in Section~\ref{sec:acs}
+allocates LGBTQ population using only local age and sex composition -- it
+offers no mechanism for the spatial sort of LGBTQ people beyond age and
+sex. I use the observed concentration of same-sex couples as a proxy for
+the broader LGBTQ population's spatial distribution.
 
-Formally, within a state I assume same-sex couples and all LGBTQ people
-have the same probability of selecting a given PUMA conditional on living
-in that state. This is an approximation, not an identity: same-sex couples
-tend to be older, wealthier, better-educated, and more likely to identify
-as gay or lesbian than the broader LGBTQ population, so their spatial
-concentration could systematically differ from, say, young queer
-individuals'. I accept this approximation because it still captures real
-geographic signal the age/sex projection alone misses entirely, and because
-the calibration strength is a single tunable parameter ($\gamma$ below)
-rather than a hard constraint.
+Same-sex couples are an imperfect proxy, skewing older,
+wealthier, better-educated, and more likely to identify as gay or lesbian
+than the broader LGBTQ population. Within metropolitan areas, their spatial 
+Concentration might systematically differ other LGBTQ sub-groups, particularly young, non-binary and transgender populations. Rather than
+apply a couples-based tilt to the whole LGBTQ population, I blend it with a second spatial proxy: the geographic concentration of
+\emph{singles} of the same sex-age cell. The weight placed on couples relative to single depends on the national age-sex cell marriage rate in the HPS.
 
-\subsection{PUMA Calibration Factors}
+\subsection{Coupled and Singles Spatial Signals}
 
-For each PUMA $p$, define the uncalibrated LGBTQ share of the state total
-projected in Section~\ref{sec:acs}:
-\[
-S_p = \frac{\sum_{b \in p} \hat{E}[\text{LGBTQ}_b]}
-{\sum_{p'} \sum_{b \in p'} \hat{E}[\text{LGBTQ}_b]}.
-\]
 I construct a same-sex-couple signal from ACS Table B09019 counts of
-same-sex (SS) and opposite-sex (OS) couples by PUMA. PUMAs with fewer than
-100 total couples are dropped as too noisy to trust, and the raw
-same-sex share is winsorized to the 1st--99th percentile across PUMAs
-before transforming, to keep a handful of tiny, extreme PUMAs from
-dominating the calibration:
+same-sex (SS) and opposite-sex (OS) couples by PUMA, unchanged from before:
+PUMAs with fewer than 100 total couples are dropped as too noisy to trust,
+and the raw same-sex share is winsorized to the 1st--99th percentile across
+PUMAs before transforming, to keep a handful of tiny, extreme PUMAs from
+dominating the calibration,
 \[
 \hat q_p = \text{winsorize}_{[0.01,\,0.99]}
 \!\left(\frac{\text{SS couples}_p}{\text{SS couples}_p + \text{OS
 couples}_p}\right).
 \]
-The signal is then logit-transformed and mean-centered relative to the
-\emph{uncalibrated} LGBTQ distribution, so it measures relative rather than
-absolute concentration:
+I normalized to a spatial share:
 \[
-\tilde{\sigma}_p
-=
-\text{logit}(\hat q_p)
-\;-\;
-\sum_{p'} S_{p'}\,\text{logit}(\hat q_{p'}).
+\rho_p^{\text{couple}} = \frac{\text{SS couples}_p}{\sum_{p'} \text{SS
+couples}_{p'}}.
 \]
-For PUMAs with fewer than 100 couples (dropped above, hence no $\hat q_p$),
-I set $\tilde\sigma_p = 0$: no tilt in either direction, equivalent to
-leaving the raw uncalibrated share $S_p$ untouched.
 
-The tilt factor for PUMA $p$ is $T_p = \exp(\gamma\, \tilde\sigma_p)$,
-where $\gamma > 0$ governs how strongly the reweighting responds to the
-same-sex-couple signal (site defaults to $\gamma = 0.5$, a deliberately
-conservative choice given the approximation discussed above). The
-calibrated target share and resulting calibration factor are
+The singles signal comes from ACS Table B12002 (sex by marital status
+by age), for birth sex $s$ and age bin $a$:
 \[
-S_p^* = \frac{S_p\, T_p}{\sum_{p'} S_{p'}\, T_{p'}},
-\qquad
-\hat{c}_p = \frac{S_p^*}{S_p}.
+\rho_p^{\text{single}}(s,a) = \frac{\text{Not-married}_{p,s,a}}
+{\sum_{p'} \text{Not-married}_{p',s,a}},
 \]
+where ``not married'' includes everyone except people currently married with a
+spouse present. PUMAs with fewer than 100 such people in a
+given $(s,a)$ are dropped, the same threshold applied to the couples signal.
+
+\subsection{Coupled-Share Blend Weight}
+
+From the HPS, I estimate the national married share of people in cell $(s,g,\ell,a)$.
+HPS lacks an option for unmarried cohabiting partners question, so ``married'' is an imperfect proxy for ``coupled'', understating true coupled cohabitation particularly among younger people. I smooth the married share across nearby ages exactly as in Section~\ref{sec:dirichlet} (the same age-local, effective-sample-size-weighted decay, but for a single Beta-distributed share rather than a Dirichlet-distributed composition vector), then winsorized to $[0.05,
+0.95]$ so no cell relies entirely on one spatial signal:
+\[
+\hat\mu_{s,g,\ell,a} = \text{winsorize}_{[0.05,\,0.95]}\big(\text{smoothed
+married share of cell } (s,g,\ell,a)\big).
+\]
+
+\subsection{PUMA Calibration Factors}
+
+For each PUMA $p$ and cell $(s,g,\ell,a)$, define the uncalibrated LGBTQ
+share of the state total projected in Section~\ref{sec:acs}, now computed
+\emph{within} the cell rather than pooled across all cells:
+\[
+S_p(s,g,\ell,a) = \frac{\sum_{b \in p} \hat{E}[\text{count}_{s,g,\ell,a,b}]}
+{\sum_{p'} \sum_{b \in p'} \hat{E}[\text{count}_{s,g,\ell,a,b}]}.
+\]
+The blended spatial share for cell $(s,g,\ell,a)$ is a weighted average of
+the two signals above, using that cell's own coupled share as the weight:
+\[
+\rho_p(s,g,\ell,a) = \hat\mu_{s,g,\ell,a}\, \rho_p^{\text{couple}}
+\;+\; (1-\hat\mu_{s,g,\ell,a})\, \rho_p^{\text{single}}(s,a).
+\]
+From here the tilt machinery is unchanged from the original single-signal
+version, just re-indexed by cell. The blended signal is logit-transformed
+and mean-centered relative to the cell's own uncalibrated distribution,
+\[
+\tilde{\sigma}_p(s,g,\ell,a)
+=
+\text{logit}(\rho_p(s,g,\ell,a))
+\;-\;
+\sum_{p'} S_{p'}(s,g,\ell,a)\,\text{logit}(\rho_{p'}(s,g,\ell,a)),
+\]
+and the tilt factor, calibrated target share, and calibration factor follow
+exactly as before:
+\begin{gather*}
+T_p(s,g,\ell,a) = \exp\!\big(\gamma\, \tilde{\sigma}_p(s,g,\ell,a)\big),
+\\[4pt]
+S_p^*(s,g,\ell,a) = \frac{S_p(s,g,\ell,a)\, T_p(s,g,\ell,a)}
+{\sum_{p'} S_{p'}(s,g,\ell,a)\, T_{p'}(s,g,\ell,a)},
+\\[4pt]
+\hat{c}_p(s,g,\ell,a) = \frac{S_p^*(s,g,\ell,a)}{S_p(s,g,\ell,a)}.
+\end{gather*}
+$\gamma$ keeps its original role as a single global conservative dial (site
+still defaults to $\gamma=0.5$): it governs how strongly \emph{any} cell's
+reweighting responds to its blended spatial signal, while the coupled-share
+weight $\hat\mu$ is what determines \emph{which} spatial signal -- couples
+or singles -- that cell is actually being tilted toward.
 
 \subsection{Inverse-Distance-Weighted Smoothing to Tract Level}
 
-Applying $\hat c_p$ uniformly to every tract within PUMA $p$ produces a
-step-function surface, with hard discontinuities at PUMA
-boundaries. Yet those jumps stem from where the Census Bureau happened
-to draw PUMA lines, not real demographic transitions.
-Hence, I smooth the calibration factors to the tract level using inverse-distance weighting
+Applying $\hat c_p(s,g,\ell,a)$ uniformly to every tract within PUMA $p$
+produces a step-function surface, with hard discontinuities at PUMA
+boundaries. Yet those jumps stem from where the Census Bureau happened to
+draw PUMA lines, not real demographic transitions. Hence, I smooth the
+calibration factors to the tract level using inverse-distance weighting
 (IDW) instead of applying them as a step function.
 
-Let $\mathbf{x}_b$ and $\mathbf{x}_p$ denote the projected-coordinate
-(EPSG:3857) centroids of tract $b$ and PUMA $p$. The IDW-smoothed
-calibration factor for tract $b$ is
+Let $\mathbf{x}_b$ and $\mathbf{x}_p$ denote the centroids of tract $b$ and
+PUMA $p$. The IDW-smoothed calibration factor for tract $b$ and cell
+$(s,g,\ell,a)$ is
 \[
-\tilde{c}_b
+\tilde{c}_b(s,g,\ell,a)
 =
-\frac{\displaystyle\sum_p \|\mathbf{x}_b - \mathbf{x}_p\|^{-2}\, \hat{c}_p}
+\frac{\displaystyle\sum_p \|\mathbf{x}_b - \mathbf{x}_p\|^{-2}\,
+\hat{c}_p(s,g,\ell,a)}
      {\displaystyle\sum_p \|\mathbf{x}_b - \mathbf{x}_p\|^{-2}}.
 \]
-A tract deep inside a single PUMA receives a factor close to that PUMA's
-$\hat c_p$; a tract near a PUMA boundary receives a blend of the
-neighboring PUMAs' factors, weighted by inverse squared distance. This
-preserves the geographic heterogeneity the calibration is meant to capture
-while producing a spatially continuous surface with no visible seams.
-Checked against Michigan's 4{,}148 tracts and 68 PUMAs, IDW weights sum to
-1.0 in every tract by construction, and resulting calibration factors range
-from 0.81 to 1.19 -- a meaningfully wide spread of local tilt, but nowhere
-near a discontinuous jump.
+A tract deep inside a single PUMA receives a factor close to that PUMA's $\hat{c}_p$; a tract near a PUMA boundary receives a blend of the neighboring PUMAs' factors, weighted by inverse squared distance. IDW smoothing preserves geographic heterogeneity while producing a spatially continuous surface with no visible seams.
 
-All subcategory estimates in tract $b$ are multiplied by $\tilde c_b$, and
-the whole state is rescaled so totals match the uncalibrated projection
-from Section~\ref{sec:acs}:
+All subcategory estimates in tract $b$ and cell $(s,g,\ell,a)$ are
+multiplied by $\tilde c_b(s,g,\ell,a)$ and then summed over $s,a$ and
+collapsed over $g$ into the output bucket $k$, exactly as in
+Section~\ref{sec:acs}; the whole state is then rescaled so totals match the
+uncalibrated projection:
 \[
 \text{scale} =
 \frac{\sum_b \hat{E}[\text{LGBTQ}_b]}{\sum_b \tilde c_b\, \hat{E}[\text{LGBTQ}_b]}.
@@ -358,12 +366,7 @@ from Section~\ref{sec:acs}:
 \section{Capacity Constraint}
 \label{sec:capacity}
 
-The PUMA reweighting above is, by design, a multiplicative tilt -- and
-multiplicative tilts have no natural ceiling. In high-concentration areas,
-reweighting and state-level rescaling can occasionally push a tract's
-estimated count for an output gender bucket $k$ above that bucket's actual
-population, which is nonsensical: no tract can contain more LGBTQ men than
-it contains men.
+The PUMA reweighting above is a multiplicative tilt, which lacks a natural ceiling. In high-concentration areas, reweighting and state-level rescaling can push a tract's estimated count for an output gender bucket $k$ above that bucket's actual population. Yet no tract can contain more LGBTQ men than it contains men (or women or envies).
 
 For output gender bucket $k \in \{m, w, \text{nb}\}$ and tract $b$, let
 $\hat N^{\text{LGBTQ}}_{k,b}$ denote the post-calibration LGBTQ count and
@@ -375,9 +378,6 @@ proportionally, preserving relative composition:
 \right),
 \]
 with every subcategory count for bucket $k$ in tract $b$ multiplied by
-$\kappa_{k,b}$. Imposition of the capacity constraint is rare; in Michigan, 
-the constraint bound only 64 tracts.
-Even when the constraint affects a tract's population, the aggregate consequences
-of the constraint are minute. 
+$\kappa_{k,b}$. Imposition of the capacity constraint is rare. 
 
 \end{document}
