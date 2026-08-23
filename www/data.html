@@ -35,14 +35,13 @@ Additionally, limitations within Household Pulse Survey microdata mean that I ca
 Step 2 constructs a crosswalk from ACS age-sex counts to age-gender identity-sexuality estimates.
 These composition estimates are stabilized using <strong>age-local Dirichlet smoothing</strong>, allowing gender identity shares to vary smoothly across cohorts while remaining responsive to well-identified age groups (For example, younger AFAB lesbians roughly 15 percentage points more likely to identify as non-binary than AMAB gays in the same age cohort. Age-local Dirichlet smoothing preserves the pattern, just smoothing out some of the noise).</li>
 
-<li>Stabilize state-level shares of LGBTQ sub-populations (i.e. lesbians and gays, bisexuals, queers, transgender people) using empirical Bayes shrinkage across states to reduce noise in sparsely sampled cells (think transgender people in any state or bisexuals in Wyoming) while preserving meaningful geographic heterogeneity.</li>
+<li>Estimate LGBTQ sub-population shares (i.e. lesbians and gays, bisexuals, queers, transgender people) by pooling nationally rather than by state. State-level cells (think transgender people in any state or bisexuals in Wyoming) were too sparse to trust even with empirical Bayes shrinkage across states, so every state now applies the same national LG/bisexual/queer mix to its own state-level identification rate from step 1.</li>
 
 <li>Project expected LGBTQ population counts to Census tracts by combining estimated identification rates with ACS 5-year age&ndash;sex population counts (table B01001). Since age and sex vary locally, sexuality and gender identity will too.</li>
 
-<li>Reweight projected LGBTQ populations within states using the observed concentration of same-sex couples at the PUMA level as a proxy for within-state geographic clustering.
-Within a state, I assume that <strong>same-sex couples and all LGBTQ people live in the same areas</strong>.
-More precisely, same-sex couples and all LGBTQ must have the same probability of selecting a PUMA when choosing to live within a given state.
-Note that same-sex couples tend to be older, wealthier, better educated, and more likely to identify as gay or lesbian than the broader LGBTQ population, which suggests their spatial concentration patterns might systematically differ.
+<li>Reweight projected LGBTQ populations within states by blending two PUMA-level spatial proxies: the observed concentration of same-sex couples, and the observed concentration of singles within the same birth sex and age cell.
+Note that same-sex couples tend to be older, wealthier, better educated, and more likely to identify as gay or lesbian than the broader LGBTQ population, which suggests their spatial concentration patterns might systematically differ &mdash; especially for young, non-binary, and transgender people, who are least likely to show up as a Census-visible couple at all.
+I address this by blending in the concentration of singles of the same sex and age, weighted by that cell's HPS-estimated marriage rate: cells that are more often married lean on the couples signal, cells rarely married lean on the singles signal instead.
 Nonetheless, the reweighting ensures the estimates reflect more than the age and sex composition of a Census tract.
 <br><br>
 The reweighting produces a calibration factor for each PUMA, but applying that factor as a hard step function at PUMA boundaries introduces visual discontinuities in the map that are artifacts of the PUMA delineation rather than real demographic transitions. To address this, I smooth the calibration factors to the tract level using <strong>inverse-distance weighting</strong> (IDW): each tract receives a distance-weighted blend of all PUMA factors rather than the factor of whichever PUMA it happens to fall in. This preserves the geographic heterogeneity the calibration is meant to capture while producing a spatially continuous surface.</li>
@@ -65,6 +64,7 @@ While topics varied between weeks, HPS consistently collected the following demo
   <li>Gender identity</li>
   <li>Sex assigned at birth</li>
   <li>Year of birth</li>
+  <li>Marital status</li>
   <li>State of residence</li>
   <li>Survey weights</li>
 </ul>
@@ -94,7 +94,8 @@ In practice, most state-level estimates fall within one to two percentage points
 
 <ul>
   <li><a href="https://censusreporter.org/tables/B01001/" target="_blank" rel="noopener">Table B01001 (Sex by Age)</a> to obtain population counts by <strong>sex assigned at birth</strong> and granular age bins, measured at the <strong>tract</strong> level.</li>
-  <li><a href="https://censusreporter.org/tables/B09019/" target="_blank" rel="noopener">Table B09019 (Household Type by Relationship)</a> informs later spatial reweighting within states, measured at the <strong>PUMA</strong> level</li>
+  <li><a href="https://censusreporter.org/tables/B09019/" target="_blank" rel="noopener">Table B09019 (Household Type by Relationship)</a> informs the same-sex-couples half of the spatial reweighting above, measured at the <strong>PUMA</strong> level.</li>
+  <li><a href="https://censusreporter.org/tables/B12002/" target="_blank" rel="noopener">Table B12002 (Sex by Marital Status by Age)</a> provides the singles-concentration signal blended into the same reweighting, also measured at the <strong>PUMA</strong> level.</li>
 </ul>
 
 <p>Because the Household Pulse Survey (HPS) and ACS use different age groupings, HPS respondents are mapped into ACS-compatible age bins prior to estimation. This ensures that estimated LGBTQ identification rates and gender-composition shares can be directly applied to ACS population counts without interpolation or extrapolation.</p>
