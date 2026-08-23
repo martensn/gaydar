@@ -14,3 +14,9 @@ data/
 # ---- Temporary / cache ----
 *_tmp/
 cache/
+
+# ---- LaTeX build artifacts ----
+docs/*.aux
+docs/*.log
+docs/*.out
+docs/*.synctex.gz
