@@ -3,3 +3,15 @@ lgbt_pop_r.R
 old
 build_all_state_caches.R
 diagnose_state_caches.R
+02_process_brfss.R
+02b_brfss_levelmatched.R
+03_benchmark_b1.R
+04_uk_compare.R
+05_uncertainty_b4.R
+06_tract_uncertainty.R
+07_attribution.R
+08_b2_target.R
+09_grid_b2.R
+figures
+build_national_geo_layers.R
+build_national_tract_rates.R
