@@ -120,6 +120,23 @@ smooth_age_dirichlet_decay <- function(df, tau = 3) {
     group_by(lgbt_cat, sex) %>%
     group_modify(function(d_group, keys) {
       
+      # Complete the (age x gen_cat) grid before smoothing. p_cat is a share
+      # *within* an (lgbt_cat, sex, age) cell, so a gen_cat with no respondents
+      # at that age has an observed share of exactly 0 -- not a missing value.
+      # Left implicit, the pivot_wider below emits NA for that cell, and since
+      # the Dirichlet prior is fit on ALL neighbours at once, a single NA turns
+      # alpha into NA and wipes out every age in the stratum. (This is how
+      # excluding AGENID_BIRTH-imputed records blanked the whole LG x F
+      # stratum: it dropped one thin cell to zero observations.)
+      # n_eff/w_sum/w2_sum are constant within an age, so carry them across.
+      d_group <- d_group %>%
+        tidyr::complete(age, gen_cat = c("cis", "non_binary", "trans"),
+                        fill = list(p_cat = 0)) %>%
+        group_by(age) %>%
+        mutate(dplyr::across(c(n_eff, w_sum, w2_sum),
+                             ~ ifelse(is.na(.x), dplyr::first(na.omit(.x)), .x))) %>%
+        ungroup()
+      
       ages <- sort(unique(d_group$age))
       
       purrr::map_dfr(ages, function(a) {
@@ -144,7 +161,8 @@ smooth_age_dirichlet_decay <- function(df, tau = 3) {
           select(age, gen_cat, p_cat, w_adj) %>%
           tidyr::pivot_wider(
             names_from  = gen_cat,
-            values_from = p_cat
+            values_from = p_cat,
+            values_fill = 0
           )
         
         w <- P_neighbors$w_adj
@@ -270,7 +288,20 @@ hps_micro <- hps %>%
     ),
     age = ref_year - TBIRTH_YEAR,
     gen = gen_from_age_2023(age),
+    # AGENID_BIRTH is the Census allocation flag for sex assigned at birth
+    # (1 = imputed, 2 = not imputed). When a respondent skips the sex-at-birth
+    # item, Census hot-decks a value at random with respect to GENID_DESCRIBE.
+    # Every gender_cat below except the two NB cells is inferred from
+    # *discordance* between EGENID_BIRTH and GENID_DESCRIBE, so a randomly
+    # allocated sex manufactures roughly a coin-flip's worth of spurious trans
+    # classifications. Left uncorrected that is ~19% of the trans cells here,
+    # matching the correction the Urban Institute published in Nov 2023.
+    # These records keep their `sex` and `lgbt_cat` (the hot deck preserves the
+    # sex margin, and orientation is untouched), so they still contribute to
+    # the state x sex x age identification rates -- they are dropped only from
+    # the gender-composition step, via the !is.na(gender_cat) filters below.
     gender_cat = case_when(
+      AGENID_BIRTH == 1 ~ NA_character_,
       GENID_DESCRIBE == 3 & EGENID_BIRTH == 1 ~ "Trans woman",
       GENID_DESCRIBE == 3 & EGENID_BIRTH == 2 ~ "Trans man",
       GENID_DESCRIBE == 2 & EGENID_BIRTH == 1 ~ "Trans woman",
@@ -352,14 +383,15 @@ margins <- list(
   list(idx = hps_micro$gen == "Millennial" & hps_micro$sex == "M", target = targets$gen_sex$Millennial[["M"]], weight = 5)
 )
 
-for (lam in c(1e5)) {
-  res <- soft_calibrate_probs(hps_micro, p0, w, X, margins, lambda = lam)
-  err <- margin_errors(res$p_adj, w, margins)
-  cat("lambda=", lam, " max|err|=", max(abs(err)), "\n")
-}
-
-best <- soft_calibrate_probs(hps_micro, p0, w, X, margins, lambda = 3e4)  # example
+# One calibration, not two. This used to run a full fit at lambda = 1e5 purely
+# to print a max|err| diagnostic, then throw it away and refit at 3e4 -- which
+# doubled a ~25-minute step for one line of console output. Report the margin
+# errors for the fit we actually keep instead.
+best <- soft_calibrate_probs(hps_micro, p0, w, X, margins, lambda = 3e4)
 hps_micro$p_lgbt_adj <- best$p_adj
+
+err <- margin_errors(best$p_adj, w, margins)
+cat("calibration lambda= 3e4  max|err|=", max(abs(err)), "\n")
 
 gen_sex_flow = hps_micro %>% 
   # Top code age at 62

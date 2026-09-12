@@ -7,7 +7,8 @@
 library(sf)
 library(dplyr)
 
-cache_dir <- "data/cache/tract_state"
+.a <- commandArgs(trailingOnly = TRUE)
+cache_dir <- file.path("data/cache", if (length(.a) >= 1 && nzchar(.a[[1]])) .a[[1]] else "tract_state")
 files <- list.files(cache_dir, pattern = "^tract_.*\\.rds$", full.names = TRUE)
 states <- gsub("tract_(.*)_2023.*", "\\1", basename(files))
 

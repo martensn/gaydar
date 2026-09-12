@@ -21,7 +21,14 @@ library(sf)
 library(stringr)
 
 root_dir  <- "."
-cache_dir <- file.path(root_dir, "data/cache/tract_state")
+# Optional CLI arg: which tract cache subdirectory to aggregate (default the
+# live one). Mirrors build_all_state_caches.R so a rebuilt set of caches can
+# be rolled through every derived layer with the same argument:
+#   Rscript code/build_national_geo_layers.R tract_state_agenid
+.args <- commandArgs(trailingOnly = TRUE)
+cache_subdir <- if (length(.args) >= 1 && nzchar(.args[[1]])) .args[[1]] else "tract_state"
+cache_dir <- file.path(root_dir, "data/cache", cache_subdir)
+cat("aggregating from:", cache_dir, "\n")
 out_path  <- file.path(root_dir, "data/cache/national_geo_layers.rds")
 
 files <- list.files(cache_dir, pattern = "^tract_.*\\.rds$", full.names = TRUE)

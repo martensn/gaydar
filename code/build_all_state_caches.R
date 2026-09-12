@@ -21,15 +21,44 @@ options(tigris_use_cache = TRUE)
 
 source("code/helpers.R")
 
-rates <- readRDS(file.path(root_dir, "data/hps/hps_acs_rates.rds"))
+# Optional CLI args, so an alternative build can be written alongside the live
+# caches instead of over them:
+#   Rscript code/build_all_state_caches.R [cache_subdir] [rates_rds]
+# Both default to the current HPS behaviour, so a bare invocation is unchanged.
+#   e.g. ... build_all_state_caches.R tract_state_agenid
+#        ... build_all_state_caches.R tract_state_brfss data/brfss/brfss_acs_rates.rds
+args <- commandArgs(trailingOnly = TRUE)
+cache_subdir <- if (length(args) >= 1 && nzchar(args[[1]])) args[[1]] else "tract_state"
+rates_file   <- if (length(args) >= 2 && nzchar(args[[2]])) args[[2]] else "data/hps/hps_acs_rates.rds"
+# Optional 3rd arg: comma-separated state list, or a file containing one. The
+# BRFSS arm covers only 41 states, and states with no rates would otherwise
+# join to NA and write a cache full of NAs rather than failing loudly.
+state_arg    <- if (length(args) >= 3 && nzchar(args[[3]])) args[[3]] else ""
 
-cache_dir <- file.path(root_dir, "data/cache", "tract_state")
+rates <- readRDS(file.path(root_dir, rates_file))
+
+cache_dir <- file.path(root_dir, "data/cache", cache_subdir)
 dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
 
-log_file <- file.path(root_dir, "data/cache", "build_log.txt")
+log_file <- file.path(
+  root_dir, "data/cache",
+  if (cache_subdir == "tract_state") "build_log.txt"
+  else paste0("build_log_", cache_subdir, ".txt")
+)
+cat("cache_dir:", cache_dir, "\nrates:", rates_file, "\nlog:", log_file, "\n")
 write(paste0("=== Batch build started ", Sys.time(), " ==="), log_file, append = FALSE)
 
 states <- c(state.abb, "DC")
+if (nzchar(state_arg)) {
+  states <- if (file.exists(state_arg)) strsplit(trimws(readLines(state_arg, warn = FALSE)[1]), ",")[[1]]
+            else strsplit(state_arg, ",")[[1]]
+  states <- trimws(states)
+}
+# Fail loudly rather than silently writing NA caches for uncovered states.
+missing_rates <- setdiff(states, unique(rates$state_abbr))
+if (length(missing_rates))
+  stop("no rates for: ", paste(missing_rates, collapse = " "))
+cat("building", length(states), "states\n")
 
 build_one <- function(state) {
   cache_key  <- paste0("tract_", state, "_2023_calTRUE_g0.5.rds")

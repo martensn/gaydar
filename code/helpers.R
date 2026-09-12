@@ -124,6 +124,27 @@ acs_wide_to_long_adults <- function(tract_wide, tract_puma_xwalk) {
 }
 
 
+# ---------------------------------------------------------------------------
+# On-disk memoisation for the expensive, parameter-INDEPENDENT inputs.
+#
+# build_tract_expected_layer()'s cost is dominated by three network calls --
+# the tract B01001 pull with geometry, and the two PUMA-level ACS signals --
+# none of which depend on gamma, idw_power or tau. Caching them lets the same
+# state be rebuilt under many parameter settings at the cost of the dplyr work
+# alone, which is what makes a grid search over the smoothing parameters
+# feasible without restructuring the function.
+#
+# Keyed on the arguments that actually vary. Delete data/cache/acs_memo/ to
+# invalidate (e.g. after a Census vintage change).
+memo_rds <- function(key, expr, dir = file.path(root_dir, "data/cache/acs_memo")) {
+  dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+  f <- file.path(dir, paste0(key, ".rds"))
+  if (file.exists(f)) return(readRDS(f))
+  val <- force(expr)
+  saveRDS(val, f)
+  val
+}
+
 get_state_couples_signal <- function(
     state_abbr,
     year,
@@ -353,21 +374,41 @@ metric_gender_cols <- list(
 build_tract_expected_layer <- function(
     state_abbr,
     year,
-    rates,
+    rates = NULL,
     use_calibration = TRUE,
-    gamma = 1) {
+    gamma = 1,
+    gender_comp = NULL,
+    married_share = NULL,
+    idw_power = 2,
+    rate_reps = NULL,
+    rates_path        = file.path(root_dir, "data/hps", "hps_acs_rates.rds"),
+    rate_reps_path    = file.path(root_dir, "data/hps", "rate_replicates.rds"),
+    gender_comp_path  = file.path(root_dir, "data/hps", "age_bin_gender_sexuality.rds"),
+    married_share_path = file.path(root_dir, "data/hps", "married_share_by_cell.rds")) {
+
+  # The three step-1 inputs (identification rates, gender composition, married
+  # shares) can each be supplied directly as a data frame or read from a path.
+  # Defaults reproduce the HPS pipeline exactly, so existing callers are
+  # unaffected. The point of the seam is that an alternative source (e.g. BRFSS
+  # state identification rates) can be swapped in *without forking the tract
+  # machinery* -- any difference in the resulting maps is then attributable to
+  # the input, not to a divergent code path.
+  #
+  # Note: `rates` was already a formal argument but was silently overwritten by
+  # a hardcoded readRDS further down, so callers' rates were being discarded.
 
   # --- Tract-level age-sex data ---
-  acs_raw <- tidycensus::get_acs(
-    geography = "tract",
-    variables = B01001_VARS,
-    state = state_abbr,
-    year = year,
-    survey = "acs5",
-    geometry = TRUE,
-    output = "tidy",
-    cache_table = TRUE
-  )
+  acs_raw <- memo_rds(sprintf("b01001_tract_%s_%s", state_abbr, year),
+    tidycensus::get_acs(
+      geography = "tract",
+      variables = B01001_VARS,
+      state = state_abbr,
+      year = year,
+      survey = "acs5",
+      geometry = TRUE,
+      output = "tidy",
+      cache_table = TRUE
+    ))
   
   tract_wide <- acs_raw |>
     dplyr::select(GEOID, variable, estimate, geometry) |>
@@ -486,8 +527,9 @@ build_tract_expected_layer <- function(
   # --- Adult population long ---
   long <- acs_wide_to_long_adults(tract_wide, tract_puma_xwalk)
   
-  rates <- readRDS(file.path(root_dir,"data/hps/hps_acs_rates.rds"))
-  gsf_eb_bin <- readRDS(file.path(root_dir,"data/hps","age_bin_gender_sexuality.rds"))
+  if (is.null(rates))       rates       <- readRDS(rates_path)
+  if (is.null(gender_comp)) gender_comp <- readRDS(gender_comp_path)
+  gsf_eb_bin <- gender_comp
   
   rates_state <- rates %>%
     filter(state_abbr == !!state_abbr) %>%
@@ -616,15 +658,11 @@ build_tract_expected_layer <- function(
   # in a Census-visible couple.
   if (isTRUE(use_calibration)) {
 
-    couples_signal <- get_state_couples_signal(
-      state_abbr = state_abbr,
-      year = year
-    )
-    singles_signal <- get_state_singles_signal(
-      state_abbr = state_abbr,
-      year = year
-    )
-    married_share <- readRDS(file.path(root_dir, "data/hps", "married_share_by_cell.rds"))
+    couples_signal <- memo_rds(sprintf("couples_%s_%s", state_abbr, year),
+      get_state_couples_signal(state_abbr = state_abbr, year = year))
+    singles_signal <- memo_rds(sprintf("singles_%s_%s", state_abbr, year),
+      get_state_singles_signal(state_abbr = state_abbr, year = year))
+    if (is.null(married_share)) married_share <- readRDS(married_share_path)
 
     if (!is.null(couples_signal)) {
 
@@ -761,7 +799,7 @@ build_tract_expected_layer <- function(
 
       dist_mat <- sf::st_distance(tract_cents, puma_cents)
       dist_num <- matrix(as.numeric(dist_mat), nrow = nrow(tract_cents))
-      idw_w    <- 1 / pmax(dist_num, 1)^2
+      idw_w    <- 1 / pmax(dist_num, 1)^idw_power
       idw_w    <- idw_w / rowSums(idw_w)
 
       puma_cell_matrix <- as.matrix(sf::st_drop_geometry(puma_cents)[, cell_cols, drop = FALSE])
@@ -899,6 +937,130 @@ build_tract_expected_layer <- function(
     } 
   }
   
+  # ===========================================================================
+  # Uncertainty columns
+  # ===========================================================================
+  # Two sampling-error components, stored in ADDITIVE form so that every
+  # downstream aggregation -- get_identity_counts(), aggregate_national(),
+  # build_national_geo_layers.R, all of which sum numeric columns -- carries
+  # them to county / PUMA / CD / radius level with no changes:
+  #
+  #   var_acs_lgbt_k  ACS sampling error in the tract age-sex counts, as a
+  #                   VARIANCE. ACS tract estimates are ~independent, so the
+  #                   variance of a sum is the sum of variances.
+  #   se_hps_lgbt_k   HPS sampling error in the state x sex x age rates, as a
+  #                   STANDARD ERROR computed by BRR at the tract (80 Fay
+  #                   replicates pushed through the projection, k = 0.5, so
+  #                   Var = (1/20) * sum (L_r - L_0)^2). Tracts in a state share
+  #                   the same rates, so their errors are strongly correlated:
+  #                   summing tract SEs linearly is CONSERVATIVE by a measured
+  #                   1.3-1.5x against the true BRR SE of the aggregate, from a
+  #                   30-tract block up to a whole state. Quadrature would
+  #                   understate it 3-30x, and a per-cell linear sum overstates
+  #                   it ~4.6x -- both were tried and rejected.
+  #
+  # Display: MOE = 1.645 * sqrt(sum(var_acs) + sum(se_hps)^2).
+  #
+  # Both are computed on the uncalibrated projection (long2) as RELATIVE
+  # errors and applied to the final capped counts. The PUMA reweighting, IDW
+  # smoothing, cap, and the Dirichlet gender composition add error this does
+  # not capture, so the result is a lower bound -- the same caveat B4
+  # (code/06_tract_uncertainty.R) states. k in {m, w, nb} matches the app's
+  # gender selector.
+  #
+  # Living here rather than in a side script is deliberate: any rebuild of the
+  # caches regenerates these columns, so a change to the baseline methodology
+  # cannot leave stale uncertainty behind.
+  if (is.null(rate_reps)) {
+    if (!file.exists(rate_reps_path))
+      stop("rate_reps_path not found: ", rate_reps_path,
+           "\nRun code/05_uncertainty_b4.R to produce it.")
+    if (file.mtime(rate_reps_path) < file.mtime(rates_path))
+      stop("rate_replicates.rds is OLDER than hps_acs_rates.rds -- the rates have ",
+           "been regenerated but the replicate rates have not. ",
+           "Rerun code/05_uncertainty_b4.R before rebuilding caches.")
+    rate_reps <- readRDS(rate_reps_path)
+  }
+  R_REP <- 80L; VAR_MULT <- 1 / (R_REP * 0.25)
+  repcols <- paste0("PWEIGHT", seq_len(R_REP))
+
+  # ACS SE per (tract, PUMA piece, sex, bin): moe / 1.645, area-apportioned
+  # across PUMA pieces exactly as the population itself is in
+  # acs_wide_to_long_adults().
+  acs_se_long <- acs_raw |>
+    sf::st_drop_geometry() |>
+    dplyr::select(GEOID, variable, moe) |>
+    dplyr::filter(variable != "total") |>
+    dplyr::mutate(
+      sex = dplyr::case_when(stringr::str_starts(variable, "m_") ~ "M",
+                             stringr::str_starts(variable, "f_") ~ "F"),
+      acs_bin = stringr::str_remove(variable, "^[mf]_")) |>
+    dplyr::filter(!is.na(sex), acs_bin %in% ADULT_BINS) |>
+    dplyr::inner_join(sf::st_drop_geometry(tract_puma_xwalk) |>
+                        dplyr::select(GEOID, puma_id, w_puma),
+                      by = "GEOID", relationship = "many-to-many") |>
+    dplyr::transmute(GEOID, puma_id, sex, acs_bin,
+                     pop_se = (moe / 1.645) * w_puma)
+
+  # Per-cell LGBTQ estimate by gender bucket, on the uncalibrated projection.
+  # LGBTQ = every row except cis-and-straight, matching lgbt_*_map_raw above.
+  cell_est <- long2 |>
+    dplyr::ungroup() |>
+    dplyr::filter(!(trans == "nt" & lgbt_cat == "Straight")) |>
+    dplyr::group_by(GEOID, puma_id, sex, acs_bin, gender) |>
+    dplyr::summarise(est = sum(gen_sex_cat, na.rm = TRUE),
+                     pop = dplyr::first(total_pop), .groups = "drop") |>
+    dplyr::mutate(r_eff = est / pmax(pop, 1e-9), cell = paste(sex, acs_bin))
+
+  # --- ACS: quadrature over independent cells ---
+  acs_part <- cell_est |>
+    dplyr::left_join(acs_se_long, by = c("GEOID", "puma_id", "sex", "acs_bin")) |>
+    dplyr::mutate(pop_se = dplyr::coalesce(pop_se, 0)) |>
+    dplyr::group_by(GEOID, puma_id, gender) |>
+    dplyr::summarise(est_k = sum(est), var_acs_k = sum((r_eff * pop_se)^2), .groups = "drop") |>
+    dplyr::mutate(cv_acs = sqrt(var_acs_k) / pmax(est_k, 1e-9))
+
+  # --- HPS: BRR at the tract. Each cell's estimate scales with its
+  # identification rate, so replicate r perturbs it by rate_r / r0. Push all
+  # 80 through with one matrix product per gender bucket. r0 and the
+  # replicates are both uncalibrated, so the ratio is internally consistent;
+  # applying it to the calibrated estimate is the delta-method step.
+  st_fips <- as.integer(substr(tract_puma_xwalk$GEOID[1], 1, 2))
+  rr <- rate_reps |> dplyr::filter(EST_ST == st_fips)
+  ratio_mat <- as.matrix(rr[, repcols]) / pmax(rr$r0, 1e-9)   # cells x 80
+  rownames(ratio_mat) <- paste(rr$sex, rr$acs_bin)
+
+  hps_part <- purrr::map_dfr(c("m", "w", "nb"), function(k) {
+    ce <- cell_est |> dplyr::filter(gender == k, cell %in% rownames(ratio_mat))
+    if (!nrow(ce)) return(NULL)
+    E <- ce |> dplyr::select(GEOID, puma_id, cell, est) |>
+      tidyr::pivot_wider(names_from = cell, values_from = est, values_fill = 0)
+    cellcols <- setdiff(names(E), c("GEOID", "puma_id"))
+    Em <- as.matrix(E[, cellcols])                                # tract-pieces x cells
+    L  <- Em %*% ratio_mat[cellcols, , drop = FALSE]              # tract-pieces x 80
+    l0 <- rowSums(Em)
+    tibble::tibble(GEOID = E$GEOID, puma_id = E$puma_id, gender = k,
+                   cv_hps = sqrt(VAR_MULT * rowSums((L - l0)^2)) / pmax(l0, 1e-9))
+  })
+
+  unc <- acs_part |>
+    dplyr::select(GEOID, puma_id, gender, cv_acs) |>
+    dplyr::left_join(hps_part, by = c("GEOID", "puma_id", "gender")) |>
+    dplyr::mutate(cv_hps = dplyr::coalesce(cv_hps, 0)) |>
+    tidyr::pivot_wider(names_from = gender, values_from = c(cv_acs, cv_hps), values_fill = 0)
+
+  tract_stats_cal <- tract_stats_cal |>
+    dplyr::left_join(unc, by = c("GEOID", "puma_id")) |>
+    dplyr::mutate(
+      var_acs_lgbt_m  = (dplyr::coalesce(cv_acs_m,  0) * lgbt_m_map )^2,
+      var_acs_lgbt_w  = (dplyr::coalesce(cv_acs_w,  0) * lgbt_w_map )^2,
+      var_acs_lgbt_nb = (dplyr::coalesce(cv_acs_nb, 0) * lgbt_nb_map)^2,
+      se_hps_lgbt_m   =  dplyr::coalesce(cv_hps_m,  0) * lgbt_m_map,
+      se_hps_lgbt_w   =  dplyr::coalesce(cv_hps_w,  0) * lgbt_w_map,
+      se_hps_lgbt_nb  =  dplyr::coalesce(cv_hps_nb, 0) * lgbt_nb_map
+    ) |>
+    dplyr::select(-dplyr::starts_with("cv_acs_"), -dplyr::starts_with("cv_hps_"))
+
   tract_puma_xwalk |>
     dplyr::left_join(tract_stats_cal, by = c("GEOID","puma_id")) |>
     sf::st_transform(CRS_LEAFLET)

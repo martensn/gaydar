@@ -27,7 +27,14 @@ library(stringr)
 sf::sf_use_s2(FALSE)
 
 root_dir  <- "."
-cache_dir <- file.path(root_dir, "data/cache/tract_state")
+# Optional CLI arg: which tract cache subdirectory to aggregate (default the
+# live one). Mirrors build_all_state_caches.R so a rebuilt set of caches can
+# be rolled through every derived layer with the same argument:
+#   Rscript code/build_national_geo_layers.R tract_state_agenid
+.args <- commandArgs(trailingOnly = TRUE)
+cache_subdir <- if (length(.args) >= 1 && nzchar(.args[[1]])) .args[[1]] else "tract_state"
+cache_dir <- file.path(root_dir, "data/cache", cache_subdir)
+cat("aggregating from:", cache_dir, "\n")
 out_path  <- file.path(root_dir, "data/cache/national_tract_rates.rds")
 
 files <- list.files(cache_dir, pattern = "^tract_.*\\.rds$", full.names = TRUE)
@@ -43,7 +50,11 @@ keep_cols <- c(
   "lg_m_map",   "lg_w_map",   "lg_nb_map",
   "bi_m_map",   "bi_w_map",   "bi_nb_map",
   "queer_m_map","queer_w_map","queer_nb_map",
-  "trans_m_map","trans_w_map"
+  "trans_m_map","trans_w_map",
+  # additive uncertainty parts (see helpers.R "Uncertainty columns"), carried
+  # so the national layer can report an MOE at any aggregation
+  "var_acs_lgbt_m","var_acs_lgbt_w","var_acs_lgbt_nb",
+  "se_hps_lgbt_m", "se_hps_lgbt_w", "se_hps_lgbt_nb"
 )
 
 # --- National Congressional District boundaries (single download, once) ---
