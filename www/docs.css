@@ -25,8 +25,26 @@ body {
 a { color: var(--accent-pink); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
-header { margin-bottom: 8px; }
-.back { color: var(--muted-50); font-size: 15px; }
+header {
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.home-arrow {
+  color: var(--text);
+  font-size: 22px;
+  text-decoration: none;
+  line-height: 1;
+}
+.home-arrow:hover { color: var(--accent-pink); text-decoration: none; }
+.top-links {
+  display: flex;
+  gap: 20px;
+  font-size: 15px;
+}
+.top-links a { color: var(--muted-50); text-decoration: none; }
+.top-links a:hover { color: var(--accent-pink); text-decoration: none; }
 
 h1 {
   font-size: 26px;
