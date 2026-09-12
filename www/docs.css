@@ -8,6 +8,7 @@
   --accent-pink: #ff1493;
 }
 * { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
 html, body {
   background-color: var(--bg);
   color: var(--text);
@@ -105,14 +106,26 @@ nav.toc a:hover { color: var(--accent-pink); }
 
 table.data-table {
   border-collapse: collapse;
+  table-layout: fixed;
   width: 100%;
+  border-top: 1px solid var(--muted-35);
+  border-bottom: 1px solid var(--muted-35);
   margin: 12px 0 20px;
   font-size: 15px;
 }
 table.data-table th, table.data-table td {
   text-align: left;
-  padding: 8px 12px 8px 0;
-  border-bottom: 1px solid var(--muted-35);
+  padding: 8px 12px;
+  border-right: 1px solid var(--muted-35);
+}
+table.data-table th:last-child, table.data-table td:last-child {
+  border-right: none;
+}
+table.data-table th:first-child, table.data-table td:first-child {
+  width: 22%;
+}
+table.data-table th:not(:first-child), table.data-table td:not(:first-child) {
+  text-align: center;
 }
 table.data-table th {
   color: var(--muted-70);
@@ -120,6 +133,7 @@ table.data-table th {
   text-transform: uppercase;
   font-size: 12px;
   letter-spacing: 0.3px;
+  border-bottom: 1px solid var(--muted-35);
 }
 
 footer {
