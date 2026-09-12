@@ -285,6 +285,14 @@ input[type="checkbox"] {
   min-width: 100px;
   max-width: 220px;
 }
+/* margin of error beside an estimate, Census-table style: quieter than the
+   estimate it qualifies, never bold */
+.gd-moe {
+  font-weight: 300;
+  opacity: 0.72;
+  font-size: 0.92em;
+  white-space: nowrap;
+}
 
 /* donut panel: card docked to the bottom edge, rounded only on the side
    facing the map; collapsible so the map can take over the freed space */

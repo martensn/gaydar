@@ -137,6 +137,90 @@ aggregate_national <- function(group_col) {
 }
 
 # ---------------------------
+# Uncertainty display
+# ---------------------------
+# The tract caches carry two additive uncertainty columns per gender bucket
+# (see the "Uncertainty columns" block in code/helpers.R):
+#   var_acs_lgbt_k  ACS sampling error as a VARIANCE  -> sum, then sqrt
+#   se_hps_lgbt_k   HPS sampling error as a SE        -> sum linearly
+# Because both are additive, every existing sum over tracts (radius, county,
+# PUMA, CD, national) already carries them. MOE at the Census 90% level:
+MOE_Z <- 1.645
+moe_from_parts <- function(var_acs, se_hps) MOE_Z * sqrt(pmax(var_acs, 0) + pmax(se_hps, 0)^2)
+
+# Census/ACS convention for showing an estimate with its margin of error:
+# round the MOE to one significant figure (two when its leading digit is 1,
+# so 14 stays 14 rather than collapsing to 10), then round the estimate to the
+# same decimal place. So 312 +/- 68 displays as "310 +/- 70". Vectorised.
+# Returns a list of two character vectors; callers wrap the MOE in a .gd-moe
+# span so it renders at normal weight beside the bold estimate.
+# Decimal place implied by an MOE under that rule: the position of the last
+# significant digit of the rounded MOE (2 for "+/- 300", 0 for "+/- 14",
+# -1 for "+/- 0.7"). NA or zero MOE means round to integers. Vectorised; used
+# by fmt_pm() and by fmt_like(), so the rule has one definition.
+moe_place <- function(m) {
+  vapply(m, function(m1) {
+    if (is.na(m1) || m1 <= 0) return(0)
+    lead <- floor(log10(m1))
+    sig  <- if (floor(m1 / 10^lead) == 1) 2 else 1
+    floor(log10(signif(m1, sig))) - (sig - 1)
+  }, numeric(1))
+}
+fmt_pm <- function(est, moe, pct = FALSE) {
+  n <- max(length(est), length(moe))
+  est <- rep_len(est, n); moe <- rep_len(moe, n)
+  out_est <- character(n); out_moe <- character(n)
+  for (i in seq_len(n)) {
+    e <- est[i]; m <- moe[i]
+    if (is.na(e)) { out_est[i] <- "n/a"; out_moe[i] <- ""; next }
+    if (is.na(m) || m <= 0) {
+      out_est[i] <- formatC(round(e), format = "f", digits = 0, big.mark = ",")
+      out_moe[i] <- ""
+      next
+    }
+    place  <- moe_place(m)
+    digits <- max(0L, -place)
+    fmt    <- function(x) formatC(round(x, -place), format = "f", digits = digits, big.mark = ",")
+    out_est[i] <- fmt(e)
+    out_moe[i] <- fmt(m)
+  }
+  if (pct) { out_est <- paste0(out_est, "%"); out_moe <- ifelse(nzchar(out_moe), paste0(out_moe, "%"), "") }
+  list(est = out_est, moe = out_moe)
+}
+# Round a companion number (the ACS population total) to the same decimal
+# place the LGBTQ estimate is shown at, so the denominator never displays
+# more precision than the numerator. No MOE is attached: the total's own
+# ACS error is not carried in the caches.
+fmt_like <- function(x, moe) {
+  n <- max(length(x), length(moe))
+  x <- rep_len(x, n); moe <- rep_len(moe, n)
+  place <- moe_place(moe)
+  vapply(seq_len(n), function(i) {
+    if (is.na(x[i])) return("n/a")
+    formatC(round(x[i], -place[i]), format = "f", digits = max(0, -place[i]), big.mark = ",")
+  }, character(1))
+}
+# HTML for "est +/- moe"; MOE omitted when absent. Leaflet tooltips take a
+# CSS class; Plotly annotations/hover text only honour a small inline-style
+# subset (no classes, no opacity), so the donut gets a muted colour and
+# smaller size inline instead.
+# `color` (Plotly only, vectorised) overrides the muted tan; see moe_text_col().
+pm_html <- function(est, moe, pct = FALSE, plotly = FALSE, color = "#c5c0a5") {
+  f <- fmt_pm(est, moe, pct)
+  open <- if (plotly) paste0("<span style=\"font-size:11px;color:", color, "\">") else "<span class=\"gd-moe\">"
+  ifelse(nzchar(f$moe), paste0(f$est, " ", open, "&plusmn; ", f$moe, "</span>"), f$est)
+}
+# Plotly paints a pie slice's hover label in the slice colour and flips the
+# body text to black on light slices (the orange lg and yellow bi). A muted
+# MOE colour has to flip with it: dark warm grey on light backgrounds, the
+# usual tan on dark ones. Threshold on perceived luminance of the background.
+moe_text_col <- function(bg) {
+  rgb <- grDevices::col2rgb(bg)
+  lum <- 0.299 * rgb[1, ] + 0.587 * rgb[2, ] + 0.114 * rgb[3, ]
+  ifelse(lum > 140, "#4d4030", "#c5c0a5")
+}
+
+# ---------------------------
 # UI
 # ---------------------------
 
@@ -486,7 +570,11 @@ server <- function(input, output, session) {
     lg   = list(m = "lg_m_map",    w = "lg_w_map",    nb = "lg_nb_map"),
     bi   = list(m = "bi_m_map",    w = "bi_w_map",    nb = "bi_nb_map"),
     queer= list(m = "queer_m_map", w = "queer_w_map", nb = "queer_nb_map"),
-    trans= list(m = "trans_m_map", w = "trans_w_map", nb = character(0))
+    trans= list(m = "trans_m_map", w = "trans_w_map", nb = character(0)),
+    # uncertainty components for the LGBTQ total, keyed by gender bucket so the
+    # same `unlist(metric_gender_cols[[..]][input$gender])` idiom selects them
+    var_acs = list(m = "var_acs_lgbt_m", w = "var_acs_lgbt_w", nb = "var_acs_lgbt_nb"),
+    se_hps  = list(m = "se_hps_lgbt_m",  w = "se_hps_lgbt_w",  nb = "se_hps_lgbt_nb")
   )
   
   get_identity_counts <- function(sf_obj, genders) {
@@ -507,8 +595,12 @@ server <- function(input, output, session) {
       bi = sum_cols(unlist(metric_gender_cols$bi[genders])),
       queer = sum_cols(unlist(metric_gender_cols$queer[genders])),
       trans = sum_cols(unlist(metric_gender_cols$trans[genders])),
-      lgbt = sum_cols(unlist(metric_gender_cols$lgbt[genders]))
-    )
+      lgbt = sum_cols(unlist(metric_gender_cols$lgbt[genders])),
+      # additive uncertainty parts summed the same way, then combined
+      var_acs = sum_cols(unlist(metric_gender_cols$var_acs[genders])),
+      se_hps  = sum_cols(unlist(metric_gender_cols$se_hps[genders]))
+    ) |>
+      dplyr::mutate(moe_lgbt = moe_from_parts(var_acs, se_hps))
   }
   
   # ---- geocode address ----
@@ -588,7 +680,9 @@ server <- function(input, output, session) {
 
     rates <- readRDS(file.path(root_dir,"data/hps/hps_acs_rates.rds"))
 
-    cache_dir <- file.path(root_dir,"data/cache", "tract_state")
+    # tract_state_agenid: rebuilt with the AGENID_BIRTH imputation fix and the
+    # uncertainty columns. The older tract_state is kept on disk as a fallback.
+    cache_dir <- file.path(root_dir,"data/cache", "tract_state_agenid")
     dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
 
     cache_key  <- paste0("tract_", state, "_2023_calTRUE_g0.5.rds")
@@ -747,6 +841,16 @@ server <- function(input, output, session) {
     cols <- unlist(metric_gender_cols[[input$metric]][input$gender])
     req(length(cols) > 0)
 
+    # Uncertainty on the LGBTQ total for the selected genders. When the metric
+    # is a subgroup (lg / bi / queer / trans) the MOE is scaled by that
+    # subgroup's share of the LGBTQ total -- the common-CV approximation: the
+    # dominant ACS error moves every subgroup in a tract proportionally, and
+    # HPS is a small share of the variance (B4). Subgroup-specific variances
+    # would add 24 columns for little gain.
+    var_cols <- unlist(metric_gender_cols$var_acs[input$gender])
+    se_cols  <- unlist(metric_gender_cols$se_hps[input$gender])
+    lgbt_cols <- unlist(metric_gender_cols$lgbt[input$gender])
+
     sf_obj <- sf_obj %>%
       mutate(
         numerator = rowSums(across(all_of(cols)), na.rm = TRUE),
@@ -754,8 +858,14 @@ server <- function(input, output, session) {
           across(all_of(paste0("total_", input$gender))),
           na.rm = TRUE
         ),
-        shr_selected = numerator / pmax(denominator, 1)
-      )
+        shr_selected = numerator / pmax(denominator, 1),
+        .lgbt_tot = rowSums(across(all_of(lgbt_cols)), na.rm = TRUE),
+        .moe_lgbt = moe_from_parts(rowSums(across(all_of(var_cols)), na.rm = TRUE),
+                                   rowSums(across(all_of(se_cols)),  na.rm = TRUE)),
+        moe_num = ifelse(.lgbt_tot > 0, .moe_lgbt * numerator / .lgbt_tot, 0),
+        moe_shr = moe_num / pmax(denominator, 1)
+      ) %>%
+      select(-.lgbt_tot, -.moe_lgbt)
 
     # ---- state percentile ----
     # Tract level: geo_sf() is already scoped to the geocoded state, so
@@ -834,17 +944,17 @@ server <- function(input, output, session) {
         label = paste0(
           "<table class=\"gd-table\">",
           tooltip_row(info$label, display_id),
-          tooltip_row("lgbtq+", formatC(numerator, format = "f", digits = 0, big.mark = ",")),
-          tooltip_row("total", formatC(denominator, format = "f", digits = 0, big.mark = ",")),
-          tooltip_row("share", sprintf("%.1f percent", shr_selected * 100)),
+          tooltip_row("lgbtq+", pm_html(numerator, moe_num)),
+          tooltip_row("total", fmt_like(denominator, moe_num)),
+          tooltip_row("share", pm_html(shr_selected * 100, moe_shr * 100, pct = TRUE)),
           "</table>"
         ) |> lapply(htmltools::HTML),
         popup = paste0(
           "<table class=\"gd-table\">",
           tooltip_row(info$label, display_id),
-          tooltip_row("lgbtq+", formatC(numerator, format = "f", digits = 0, big.mark = ",")),
-          tooltip_row("total", formatC(denominator, format = "f", digits = 0, big.mark = ",")),
-          tooltip_row("share", sprintf("%.1f percent", shr_selected * 100)),
+          tooltip_row("lgbtq+", pm_html(numerator, moe_num)),
+          tooltip_row("total", fmt_like(denominator, moe_num)),
+          tooltip_row("share", pm_html(shr_selected * 100, moe_shr * 100, pct = TRUE)),
           tooltip_row("state", fmt_pctile(state_pctile)),
           tooltip_row("national", fmt_pctile(national_pctile)),
           "</table>"
@@ -908,17 +1018,26 @@ server <- function(input, output, session) {
           non_lgbt = denom - lgbt,
           area = area_name
         ) |>
-        select(area, non_lgbt, lg, bi, queer, trans)
+        select(area, non_lgbt, lg, bi, queer, trans, lgbt_tot = lgbt, moe_lgbt)
       })) |>
-      tidyr::pivot_longer(-area, names_to = "identity", values_to = "count") |>
+      tidyr::pivot_longer(c(non_lgbt, lg, bi, queer, trans),
+                          names_to = "identity", values_to = "count") |>
       group_by(area) |>
       mutate(
         total = sum(count, na.rm = TRUE),
         prop  = ifelse(total > 0, count / total, NA_real_),
+        # slice MOE by the common-CV approximation (see bg_map_layer); the
+        # straight remainder inherits the LGBTQ total's MOE outright
+        moe_count = dplyr::case_when(
+          identity == "non_lgbt" ~ moe_lgbt,
+          lgbt_tot > 0           ~ moe_lgbt * count / lgbt_tot,
+          TRUE                   ~ 0),
         hover = paste0(
           "<b>", label_map[identity], "</b><br>",
-          "Count: ", scales::comma(count), "<br>",
-          "Percent: ", scales::percent(prop, accuracy = 0.1))) |>
+          "Count: ", pm_html(count, moe_count, plotly = TRUE,
+                             color = moe_text_col(colors[as.character(identity)])), "<br>",
+          "Percent: ", pm_html(prop * 100, moe_count / pmax(total, 1) * 100, pct = TRUE, plotly = TRUE,
+                               color = moe_text_col(colors[as.character(identity)])))) |>
       ungroup()
     
     
@@ -975,6 +1094,8 @@ server <- function(input, output, session) {
       total_pop <- sum(sub$count)
       straight_pop <- sum(sub$count[sub$identity == "non_lgbt"], na.rm = TRUE)
       lgbt_pop <- total_pop - straight_pop
+      lgbt_moe <- sub$moe_lgbt[1]
+      lgbt_fmt <- fmt_pm(lgbt_pop, lgbt_moe)
       
       # ---- CENTER TOTAL (inside donut) -- skipped on mobile, where the
       # compressed donut width doesn't leave room for two lines of numbers
@@ -989,10 +1110,13 @@ server <- function(input, output, session) {
         align   = "center",
         xanchor = "center",
         yanchor = "middle",
+        # three lines: estimate, its MOE (small, muted -- Plotly only honours
+        # inline font-size/color), then the ACS total rounded to match
         text = paste0(
-          "lgbtq: ", scales::comma(lgbt_pop), "<br>",
-          "total: ", scales::comma(total_pop),
-          "</span>"
+          "lgbtq: ", lgbt_fmt$est, "<br>",
+          if (nzchar(lgbt_fmt$moe))
+            paste0("<span style=\"font-size:11px;color:#c5c0a5\">&plusmn; ", lgbt_fmt$moe, "</span><br>"),
+          "total: ", fmt_like(total_pop, lgbt_moe)
         ),
         font = list(
           family = "Helvetica",
