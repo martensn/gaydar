@@ -3,7 +3,8 @@
 % Extended abstract assembled VERBATIM from the project's public data page
 % (www/data.html). No text below was authored for this document; typos and
 % phrasing are reproduced as they appear on the site. Maps rendered by
-% make_maps.R from the tract-level estimates.
+% make_maps.R from the tract-level estimates. The abstract (abstract.tex) and
+% any citations are the author's own; build with build.sh.
 
 \documentclass[11pt]{article}
 \usepackage[margin=0.9in]{geometry}
@@ -12,6 +13,7 @@
 \usepackage{graphicx}
 \usepackage{pdflscape}
 \usepackage{enumitem}
+\usepackage[authoryear,round]{natbib}   % \citet{key} / \citep{key}; keys in references.bib
 \usepackage[hidelinks]{hyperref}
 \usepackage{textcomp}
 \setstretch{1.12}
@@ -24,13 +26,14 @@
 \begin{document}
 \maketitle
 
-Have you ever wondered how many gay men live within a ten mile radius of any
-address in the United States? Gaydar answers this question (and any related
-inquiries about the spatial distribution of different members of the LGBTQ+
-community). I focus on adult (18+) gay and lesbian, bisexual, queer, and
-transgender populations (sorry asexuals), split into three mutually exclusive
-and collectively exhaustive gender identities: men, women, and non-binary
-people.
+\begin{abstract}
+\input{abstract}   % edit abstract.tex, not this block
+\end{abstract}
+
+Gaydar explores the spatial distribution of non-binary (NB) and/or gay and lesbian, bisexual, transgender, and queer (LGBTQ) people. I focus on adult (18+) NB and LGBTQ (sorry asexuals), split into three mutually exclusive and collectively exhaustive gender identities: men, women, and non-binary people.
+
+To view the results of the estimation methodology described below, use 
+\href{https://martensn.shinyapps.io/gaydar/}{this interactive map}.
 
 Note transgender people might also identify as gay, lesbian, bisexual, or
 queer, meaning the sub-population shares will not sum to the total because I
@@ -39,9 +42,6 @@ Household Pulse Survey microdata mean that I cannot measure non-binary
 transgender individuals.
 
 \section*{Summary}
-
-The Methods Appendix offers a precise explanation of the process through which
-I derived the estimates, though I summarize the steps below:
 
 \begin{itemize}
 \item Estimate LGBTQ identification rates by state $\times$ sex assigned at
@@ -80,9 +80,9 @@ I derived the estimates, though I summarize the steps below:
   and the observed concentration of singles within the same birth sex and
   age cell. Note that same-sex couples tend to be older, wealthier, better
   educated, and more likely to identify as gay or lesbian than the broader
-  LGBTQ population, which suggests their spatial concentration patterns might
+  LGBTQ population \citep{julian2024a}, which suggests their spatial concentration patterns might
   systematically differ --- especially for young, non-binary, and transgender
-  people, who are least likely to show up as a Census-visible couple at all.
+  people, who are least likely to show up as a Census-visible couple at all \citep{gates2013}.
   I address this by blending in the concentration of singles of the same sex
   and age, weighted by that cell's HPS-estimated marriage rate: cells that
   are more often married lean on the couples signal, cells rarely married
@@ -114,7 +114,7 @@ I derived the estimates, though I summarize the steps below:
 
 HPS was the first the Census data product to ask respondents about sexual
 orientation and gender identity, basing the design of questions on the
-results of a 2022 NASEM report. Designed to elicit responses to rapidly
+results of a 2022 NASEM report \citep{nasem2022}. Designed to elicit responses to rapidly
 changing situations (i.e. food security early in the coronavirus pandemic),
 the HPS surveyed different households each week. While topics varied between
 weeks, HPS consistently collected the following demograhic data:
@@ -185,5 +185,11 @@ or extrapolation.
 \end{center}
 \vfill
 \end{landscape}
+\restoregeometry
+
+% References. The heading only appears once something is cited (bibtex emits
+% an empty list otherwise). AER style: author-year in text, alphabetical list.
+\bibliographystyle{aer}
+\bibliography{references}
 
 \end{document}

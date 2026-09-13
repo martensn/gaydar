@@ -32,28 +32,46 @@ geo <- function(states) map_dfr(states, ~ tigris::tracts(state=.x, year=2023, cb
 load_city <- function(ct) {
   bb <- sf::st_bbox(c(xmin=ct$bb[1], ymin=ct$bb[2], xmax=ct$bb[3], ymax=ct$bb[4]), crs=4326)
   g  <- suppressWarnings(sf::st_crop(geo(ct$states), bb))
-  inner_join(g, est(ct$states), by="GEOID") |> mutate(city = ct$name)
+  # The cb=TRUE tract files are clipped to the coastline but not to inland
+  # water, so Manhattan's tracts run to the middle of the Hudson and East
+  # rivers and the island reads as fused to New Jersey and Brooklyn. Erase
+  # the Census area-hydrography polygons (rivers, harbours, lakes) from every
+  # tract; area_threshold keeps the largest 25% of water bodies so small
+  # ponds don't punch holes in tracts. Done in a projected CRS.
+  g <- sf::st_transform(g, 5070) |>
+    tigris::erase_water(area_threshold = 0.75, year = 2023) |>
+    sf::st_transform(4326)
+  # Two layers per city: every tract as a land mask (drawn grey underneath,
+  # so zero-population tracts -- parks, airports, rail yards -- show as land
+  # rather than as white holes indistinguishable from water) and the tracts
+  # with estimates on top.
+  list(land = mutate(g, city = ct$name),
+       data = inner_join(g, est(ct$states), by = "GEOID") |> mutate(city = ct$name))
 }
 dat <- map(cities, load_city)
-allshare <- unlist(map(dat, ~ .x$share))
+allshare <- unlist(map(dat, ~ .x$data$share))
 lims <- c(quantile(allshare,.02), quantile(allshare,.98))
 cat(sprintf("shared scale %.1f%%-%.1f%%\n", lims[1], lims[2]))
-walk(dat, ~ cat(sprintf("  %-12s %4d tracts  %.1f%%-%.1f%%  median %.1f%%\n",
-  .x$city[1], nrow(.x), min(.x$share), max(.x$share), median(.x$share))))
+walk(dat, ~ cat(sprintf("  %-12s %4d tracts (%d with estimates)  %.1f%%-%.1f%%  median %.1f%%\n",
+  .x$land$city[1], nrow(.x$land), nrow(.x$data), min(.x$data$share), max(.x$data$share), median(.x$data$share))))
 
 pal <- c("#c5c0a5", "#cc8855", "#ff1493")
 # patchwork 1.3.0's guide collection needs ggplot2 >= 3.5; this machine has
 # 3.4.2. So: draw the panels legend-free, pull one legend out with cowplot, and
 # lay it under all three as its own row.
-panel <- function(d, bb, legend = FALSE) ggplot(d) +
-  geom_sf(aes(fill = share), colour = "white", linewidth = 0.06) +
+# Land without an estimate is grey; water is the white page. Tract borders
+# stay white so they read as hairlines on both the grey mask and the fills.
+LAND_GREY <- "#c9c9c9"
+panel <- function(d, bb, legend = FALSE) ggplot() +
+  geom_sf(data = d$land, fill = LAND_GREY, colour = NA) +
+  geom_sf(data = d$data, aes(fill = share), colour = "white", linewidth = 0.06) +
   scale_fill_gradientn(colours = pal, limits = lims, oob = scales::squish,
                        labels = function(x) paste0(x, "%"), name = "LGBTQ share of adults") +
   # lock the panel to its bbox rather than the data extent, so dropped water
   # tracts at the edges cannot change the panel's height
   coord_sf(xlim = c(bb[1], bb[3]), ylim = c(bb[2], bb[4]),
            expand = FALSE, datum = NA) +
-  labs(title = d$city[1]) +
+  labs(title = d$land$city[1]) +
   theme_void(base_size = 12) +
   theme(plot.title = element_text(face="bold", size=17, hjust=0, margin=margin(b=4)),
         plot.margin = margin(2, 6, 2, 6),
