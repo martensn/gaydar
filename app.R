@@ -1170,7 +1170,20 @@ server <- function(input, output, session) {
 
   output$map <- renderLeaflet({
     leaflet() |>
-      addProviderTiles("CartoDB.DarkMatter") |>
+      # CARTO basemap tiles now require an API key (CARTO_KEY in .Renviron).
+      # The bundled leaflet-providers JS has no {apikey} slot in its CARTO
+      # URL, so addProviderTiles() silently drops the key -- spell the URL out.
+      addTiles(
+        urlTemplate = paste0(
+          "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=",
+          Sys.getenv("CARTO_KEY")
+        ),
+        attribution = paste(
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+          '&copy; <a href="https://carto.com/attributions">CARTO</a>'
+        ),
+        options = tileOptions(subdomains = "abcd", maxZoom = 20)
+      ) |>
       # match the post-"analyze" zoom, centered on the default address, so
       # the map doesn't open on an unhelpful zoomed-out world view
       setView(lng = -87.649285, lat = 41.942942, zoom = 11)
